@@ -200,10 +200,48 @@ full <- full %>%
 
 
 
+# Baseline Date -----------------------------------------------------------
+
+# I assign a random baseline for every control patient
+
+
+# There is an error in ID 51171, it says 8020 instead fo 2020, correct it.
+full$switch_date[full$id == 51171] <- full$switch_date[full$id == 51171] - years(6000)
+
+# Same for ID 42485, it says 2917 instead of 2017
+full$switch_date[full$id == 42485] <- full$switch_date[full$id == 42485] - years(900)
+
+switch_dates <- full %>% 
+  filter(switch == TRUE) %>% 
+  pull(switch_date)
+
+
+n_non_switchers <- full %>% 
+  filter(switch == FALSE) %>% 
+  nrow()
+
+
+# Select random samples of switch_dates
+set.seed(123)
+bl_dates_non_switchers <- sample(switch_dates, n_non_switchers, replace = TRUE)
+
+# Assign them to baseline_date
+full$baseline_date <- full$switch_date
+full$baseline_date[full$switch == FALSE] <- bl_dates_non_switchers
+
+full$baseline_date %>% summary()
+
+# Looks good
+full %>% 
+  ggplot(aes(x = baseline_date)) + 
+  geom_density(aes(fill = switch), alpha = 0.5, adjust = 0.5)
+
+
 
 # Viral failure -----------------------------------------------------------
 
-# Definition used from A. Scherrer in CID 2016
+# Definition used from A. Scherrer in CID 2016:
+# ---
 # The high-risk group included patients who
 # had ever experienced a virological failure or who were treated
 # with single- or dual-NRTI therapy for >28 days. A virological
@@ -236,14 +274,6 @@ rna <- lab %>%
   filter(id %in% full$id)
 
 
-# set.seed(123)
-# smpl <- sample(unique(full$id), 2)
-
-# art %>% 
-#   filter(id %in% smpl) %>% 
-#   View()
-
-
 on_art <- art %>% 
   filter(id %in% full$id) %>%
   group_by(id) %>% 
@@ -255,12 +285,6 @@ on_art <- art %>%
             on_art = max(on_art),
             .groups = "drop") %>% 
   mutate(stop = if_else(is.na(stop), dmy("01.01.2030"), stop))
-
-# rna_sub <- rna %>% 
-#   filter(id %in% full$id)
-# 
-# rna_sub %>% View("rna")
-# on_art %>% View("art")
 
 
 setDT(rna);setDT(on_art)
@@ -275,11 +299,17 @@ comb_art <- on_art[rna,
                      period_stop = x.stop)] %>% 
   as_tibble()
 
-
+set.seed(1235)
+smpl <- sample(unique(full$id), 10)
 
 comb_art %>% 
-  mutate(change = if_else(on_art != lag(on_art, default = 2) & on_art == 1, 
-                          "X", "")) %>% 
+  group_by(id) %>% 
+  mutate(flag = if_else(rna > 500 & lag(rna) > 500 & on_art == 1, 
+                        "X", "")) %>% 
+  group_by(id, art_period) %>% 
+  mutate(t = as.numeric(rna_date - first(period_start)), 
+         failure = if_else(flag == "X" & t >= 180, "Y", "N")) %>% 
+  filter(id %in% smpl) %>% 
   View()
 
 
