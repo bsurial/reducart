@@ -1,0 +1,243 @@
+
+# Libraries ---------------------------------------------------------------
+
+library(tidyverse)
+library(bernr)
+library(lubridate)
+library(flextable)
+library(tableone)
+source("themes.R")
+
+
+
+# Functions ---------------------------------------------------------------
+
+# remove backbones from treatment string
+drop_backbone <- function(string) {
+  string <- str_remove_all(string, "ABC|3TC|ETC|TAF|TDF|COB|RTV|AZT")
+  str_squish(string)
+}
+
+
+
+# Data --------------------------------------------------------------------
+
+
+modif_art <- pro_read("modif_art.rds")
+fup <- pro_read("fup.rds")
+tail <- pro_read("tail.rds")
+pat <- pro_read("pat.rds")
+
+
+
+# Preparation -------------------------------------------------------------
+
+
+# Restrict analysis to individuals with active follow-up after 1.1.20
+recent <- fup %>% 
+  select(id, fupdate) %>% 
+  arrange(id, desc(fupdate)) %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  filter(fupdate >= dmy("01.01.2020"))
+
+
+# Calculate number of classes
+art <- modif_art %>% 
+  mutate(dur = as.numeric(enddate - moddate)) %>% 
+  # Exclude time intervals where we have no data, but were less than 60 days
+  filter(!(is.na(treatment) & enddate - moddate <= 60)) %>%
+  arrange(id, moddate) %>% 
+  group_by(id) %>% 
+  mutate(current_art = last(treatment)) %>% 
+  select(-(num_art:precision)) %>% 
+  # Compute number of classes
+  mutate(classes = drop_backbone(treatment),
+         classes_n = str_count(classes, "\\S+")) 
+
+
+# Treated critera: 
+# - at least 2 classes, of which 1 has to be a boosted regime
+# - switched to either DTG/F/TAF, BIG/F/TAF, EVG/c/F/TAF or DTG/ABC/3TC
+
+treat <- art %>% 
+  # Now, apply complicated filter
+  mutate(flag = if_else(classes_n == 1 & 
+                        lag(classes_n > 1) & 
+                        treatment %in% c("DTG ETC TAF", 
+                                         "BIC ETC TAF", 
+                                         "3TC ABC DTG", 
+                                         "COB ETC EVG TAF") & 
+                        str_detect(lag(treatment), "RTV|COB"),
+                        "X", "")) %>% 
+  mutate(switch = any(flag == "X"), 
+         switch_date = if_else(flag == "X", moddate, NA_real_)) %>% 
+  filter(any(flag == "X")) %>% 
+  # Check regimens that were before and after switch
+  mutate(simple_reg = if_else(flag == "X", treatment, NA_character_), 
+         comp_reg = if_else(lead(flag) == "X", treatment, NA_character_)) %>% 
+  arrange(id, simple_reg, moddate) %>% 
+  mutate(simple_reg = first(simple_reg)) %>% 
+  arrange(id, comp_reg, moddate) %>% 
+  mutate(comp_reg = first(comp_reg)) %>%
+  arrange(id, switch_date) %>% 
+  mutate(switch_date = first(switch_date)) %>% 
+  mutate(comp_reg_s = drop_backbone(comp_reg), 
+         simple_reg_s = drop_backbone(simple_reg)) %>% 
+  mutate(across(contains("_reg_s"), ~str_squish(.x))) %>% 
+  arrange(id, moddate) %>% 
+  slice(1) %>%
+  ungroup() %>% 
+  select(id, last_art = current_art, switch, switch_date, 
+         simple_reg, simple_reg_s, 
+         comp_reg, comp_reg_s)
+
+
+
+
+# Control group inclusion = 
+control <- art %>% 
+  mutate(flag = if_else(classes_n > 1 & 
+                        str_detect(treatment, "RTV|COB") & 
+                        moddate == last(moddate), 
+                        "X", "")) %>% 
+  filter(any(flag == "X")) %>% 
+  mutate(switch = FALSE) %>% 
+  arrange(id, desc(moddate)) %>% 
+  select(id, last_art = current_art, switch) %>% 
+  slice(1)
+
+
+# There are some individuals in the control group. This is because they simplified, 
+# but later had an intensification of their treatment, and therefore the current
+# ART regimen contains >= classes. They remain in the "treat" group. I therefore
+# remove them from the controls
+
+control <- control %>% 
+  filter(!(id %in% treat$id))
+
+
+# I don't want individuals who have DDI or D4T or so in their final regime, this
+# is not current practice so I exlcude them here.
+
+control <- control %>% 
+  filter(!str_detect(last_art, "DDI|D4T"))
+
+# Join them together
+full <- treat %>% 
+  full_join(control) %>% 
+  mutate(last_art_s = drop_backbone(last_art)) %>% 
+  relocate(last_art_s, .after = last_art)
+
+
+full <- full %>% 
+  left_join(recent %>% select(id, fupdate)) %>% 
+  rename(last_fup = fupdate)
+
+
+full %>% 
+  # filter(last_fup >= dmy("01.01.2020")) %>% 
+  count(comp_reg_s, simple_reg_s, sort = T) %>% 
+  flextable() %>% 
+  autofit()
+
+
+
+
+# add patient characteristics ---------------------------------------------
+
+risk <- tail %>% 
+  mutate(riskgroup = case_when(
+    riskgroup %in% c("BLOOD", "PERINAT", "UNKNOWN") ~ "OTHER", 
+    TRUE                                            ~ riskgroup), 
+    riskgroup = factor(riskgroup, levels = c("MSM", "HET", "IDU", "OTHER"))) %>% 
+  select(id, riskgroup)
+
+
+# Last center and last source
+source <- fup %>% 
+  arrange(id, desc(fupdate)) %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  mutate(source = factor(source, 
+                         levels = c(1, 2, 3), 
+                         labels = c("Cohort center", "Hospital",
+                                            "Physician")), 
+         center = factor(center2, 
+                          levels = c(10, 20, 30, 40, 50, 60, 70), 
+                          labels = c("ZH", "BS", "BE", "GE", "LAU", 
+                                     "LUG", "STG"))) %>% 
+  select(id, center, source)
+
+
+# Calculate number of changes in database
+n_treatments <- modif_art %>% 
+  group_by(id) %>% 
+  summarise(n_treatments = n())
+
+
+# Join together
+pop_det <- pat %>% 
+  mutate(male = if_else(sex == 1, 1, 0), 
+         ethnicity = case_when(ethnicity == 1 ~ "White", 
+                               ethnicity == 2 ~ "Black",
+                               ethnicity %in% c(0, 3, 4) ~ "Other", 
+                               TRUE ~ NA_character_), 
+         age = 2021 - born) %>%
+  mutate(ethnicity = factor(ethnicity, levels = c("White", "Black", "Other"))) %>% 
+  select(id, age, male, ethnicity) %>% 
+  left_join(risk, by = "id") %>% 
+  left_join(source, by = "id") %>% 
+  left_join(n_treatments, by = "id")
+
+full <- full %>% 
+  left_join(pop_det, by = "id")
+
+
+
+# Table 1 -----------------------------------------------------------------
+
+
+vars <- c("age", "male", "ethnicity", "riskgroup", 
+          "source", "center", "n_treatments")
+
+cat_vars <- c("male", "ethnicity", "riskgroup", "source", "center")
+
+tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars, 
+               data = full)
+  
+
+print(tab1, nonnormal = c("age", "n_treatments"), 
+      printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
+  as_tibble(rownames = "Variable") %>% 
+  select(-test) %>% 
+  rename("No simplification" = `FALSE`, 
+         "Simplification" = `TRUE`) %>% 
+  flextable() %>% 
+  padding(i = ~ !str_detect(Variable, paste0(c(vars, "^n"), collapse = "|^")), 
+          j = 1, padding.left = 14) %>% 
+  bold(i = ~ str_detect(Variable, paste0(c(vars, "^n"), collapse = "|^")), 
+       j = 1) %>% 
+  f_theme_surial() %>% 
+  align(j = 2:4, align = "center") %>% 
+  autofit()
+
+
+full %>% 
+  filter(switch == TRUE) %>% 
+  count(comp_reg, simple_reg, sort = T) %>% 
+  rename("Prior ART" = comp_reg, 
+         "Simplified ART" = simple_reg) %>% 
+  flextable() %>% 
+  f_theme_surial()
+
+
+full %>% 
+  filter(switch == FALSE) %>% 
+  count(last_art, sort = T) %>% 
+  rename("Last ART" = last_art) %>%
+  flextable() %>% 
+  f_theme_surial()
+
