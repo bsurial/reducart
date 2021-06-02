@@ -6,6 +6,7 @@ library(bernr)
 library(lubridate)
 library(flextable)
 library(tableone)
+library(here)
 source("themes.R")
 
 
@@ -197,47 +198,75 @@ full <- full %>%
 
 
 
-# Table 1 -----------------------------------------------------------------
+# Tables   -----------------------------------------------------------------
 
 
+# Define variables for table
 vars <- c("age", "male", "ethnicity", "riskgroup", 
           "source", "center", "n_treatments")
-
 cat_vars <- c("male", "ethnicity", "riskgroup", "source", "center")
 
+# Create vector used later for indentation in flextable
+cvars <- paste0(c(vars, "^n"), collapse = "|^")
+
+
+# Table 1
 tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars, 
                data = full)
   
-
-print(tab1, nonnormal = c("age", "n_treatments"), 
-      printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
+t_patchar <- (print(tab1, nonnormal = c("age", "n_treatments"), 
+                   printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
   as_tibble(rownames = "Variable") %>% 
   select(-test) %>% 
   rename("No simplification" = `FALSE`, 
          "Simplification" = `TRUE`) %>% 
   flextable() %>% 
-  padding(i = ~ !str_detect(Variable, paste0(c(vars, "^n"), collapse = "|^")), 
+  padding(i = ~ !str_detect(Variable, cvars), 
           j = 1, padding.left = 14) %>% 
-  bold(i = ~ str_detect(Variable, paste0(c(vars, "^n"), collapse = "|^")), 
+  bold(i = ~ str_detect(Variable, cvars), 
        j = 1) %>% 
   f_theme_surial() %>% 
   align(j = 2:4, align = "center") %>% 
-  autofit()
+  autofit())
 
 
-full %>% 
+# ART regimes of those who had simplifications
+t_switch <- full %>% 
   filter(switch == TRUE) %>% 
-  count(comp_reg, simple_reg, sort = T) %>% 
-  rename("Prior ART" = comp_reg, 
-         "Simplified ART" = simple_reg) %>% 
+  count(comp_reg_s, simple_reg_s, sort = T) %>% 
+  rename("Prior ART" = comp_reg_s, 
+         "Simplified ART" = simple_reg_s) %>% 
   flextable() %>% 
   f_theme_surial()
 
 
-full %>% 
+# ART regimes of those who remained on complicated ART
+t_control <- full %>% 
   filter(switch == FALSE) %>% 
-  count(last_art, sort = T) %>% 
-  rename("Last ART" = last_art) %>%
+  count(last_art_s, sort = T) %>% 
+  rename("Last ART" = last_art_s) %>%
   flextable() %>% 
   f_theme_surial()
 
+
+
+# Output ------------------------------------------------------------------
+
+
+# Write tables out to word
+t_patchar %>% 
+  set_caption("Overview of Patients") %>% 
+  save_as_docx(path = here("tables", "02-overview_of_patients.docx"))
+
+t_switch %>% 
+  set_caption("Anchor agents of patients who had simplification") %>% 
+  save_as_docx(path = here("tables", "02-art_of_simplifications.docx"))
+
+t_control %>% 
+  set_caption("Anchor agents of patients who did not simplify") %>% 
+  save_as_docx(path = here("tables", "02-art_of_complicated_art.docx"))
+
+
+
+# Write dataframe as rds
+write_rds(full, here("processed", "02-proposal_population.rds"))
