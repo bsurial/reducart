@@ -186,10 +186,9 @@ pop_det <- pat %>%
          ethnicity = case_when(ethnicity == 1 ~ "White", 
                                ethnicity == 2 ~ "Black",
                                ethnicity %in% c(0, 3, 4) ~ "Other", 
-                               TRUE ~ NA_character_), 
-         age = 2021 - born) %>%
+                               TRUE ~ NA_character_)) %>%
   mutate(ethnicity = factor(ethnicity, levels = c("White", "Black", "Other"))) %>% 
-  select(id, age, male, ethnicity) %>% 
+  select(id, born, male, ethnicity) %>% 
   left_join(risk, by = "id") %>% 
   left_join(source, by = "id") %>% 
   left_join(n_treatments, by = "id")
@@ -237,6 +236,11 @@ full %>%
   geom_density(aes(fill = switch), alpha = 0.5, adjust = 0.5)
 
 
+# Calculate age at baseline
+full <- full %>% 
+  mutate(age = year(baseline_date) - born) %>% 
+  select(-born)
+
 
 # Viral failure -----------------------------------------------------------
 
@@ -256,24 +260,33 @@ full %>%
 # Single or dual NRTI treatment in the past
 nrti_mono <- modif_art %>% 
   filter(id %in% full$id) %>% 
+  # add baseline date
+  left_join(full %>% select(id, baseline_date), by = "id") %>% 
   group_by(id) %>% 
   mutate(no_third = (num_nnrti + num_pi + num_ntrti + 
                        num_fi + num_others + num_inti) == 0) %>% 
-  summarise(nrti_mono = any(num_nrti <= 2 & no_third & !is.na(treatment)))
+  summarise(nrti_mono = any(num_nrti <= 2 & 
+                            no_third & 
+                            !is.na(treatment) & 
+                            moddate < baseline_date))
 
 
 
-# Viral failure
+# Viral failure before baseline
+
+# Prepare ART data
 art <- modif_art %>% 
   filter(id %in% full$id) %>% 
   select(-(num_art:precision))
 
+# Prepare RNA data (we don't have data for 2 individuals)
 rna <- lab %>% 
   select(id, rna, labdate) %>% 
   drop_na() %>% 
   filter(id %in% full$id)
 
 
+# Aggregate art data into periods
 on_art <- art %>% 
   filter(id %in% full$id) %>%
   group_by(id) %>% 
@@ -287,6 +300,7 @@ on_art <- art %>%
   mutate(stop = if_else(is.na(stop), dmy("01.01.2030"), stop))
 
 
+# Join ART and RNA data
 setDT(rna);setDT(on_art)
 
 comb_art <- on_art[rna, 
@@ -297,48 +311,35 @@ comb_art <- on_art[rna,
                      on_art = x.on_art, 
                      period_start = x.start, 
                      period_stop = x.stop)] %>% 
-  as_tibble()
+  as_tibble() %>% 
+  # add baseline date
+  left_join(full %>% select(id, baseline_date), by = "id")
 
-set.seed(1235)
-smpl <- sample(unique(full$id), 10)
 
-comb_art %>% 
+# Code failure as having 2x RNA > 500 while being on ART >= 180 days, 
+# and only count failures PRIOR to baseline
+failure_long <- comb_art %>% 
   group_by(id) %>% 
   mutate(flag = if_else(rna > 500 & lag(rna) > 500 & on_art == 1, 
                         "X", "")) %>% 
   group_by(id, art_period) %>% 
   mutate(t = as.numeric(rna_date - first(period_start)), 
-         failure = if_else(flag == "X" & t >= 180, "Y", "N")) %>% 
-  filter(id %in% smpl) %>% 
-  View()
+         failure = if_else(flag == "X" & 
+                           t >= 180 & 
+                           rna_date <= baseline_date, "Y", "N"))
 
-
-
-
-comb_art %>% 
-  group_by(id, rna_date, art_period) %>% 
-  filter(id %in% smpl) %>% 
-  ggplot(aes(x = rna_date, y = rna)) +
-  geom_line(aes(group = id)) +
-  geom_point(aes(color = factor(on_art))) +
-  facet_wrap(~id) +
-  scale_y_log10()
-
-
-comb_art %>% 
-  filter(id %in% smpl) %>% 
-  print(n = 220)
-
-rna %>% 
-  filter(id %in% smpl) %>% 
+any_failure <- failure_long %>% 
   group_by(id) %>% 
-  # Flag virological failure
-  mutate(flag = if_else(rna > 500 & lag(rna) <= 500, "X", "")) %>% 
-  View("rna")
+  summarise(any_failure = any(failure == "Y")) %>% 
+  mutate(any_failure = replace_na(any_failure, FALSE))
+  
 
 
+# Add NRTI mono and viral failure to full data set
 
-
+full <- full %>% 
+  left_join(nrti_mono, by = "id") %>% 
+  left_join(any_failure, by = "id")
 
 
 
@@ -346,9 +347,10 @@ rna %>%
 
 
 # Define variables for table
-vars <- c("age", "male", "ethnicity", "riskgroup", 
+vars <- c("age", "male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
           "source", "center", "n_treatments")
-cat_vars <- c("male", "ethnicity", "riskgroup", "source", "center")
+cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
+              "source", "center")
 
 # Create vector used later for indentation in flextable
 cvars <- paste0(c(vars, "^n"), collapse = "|^")
