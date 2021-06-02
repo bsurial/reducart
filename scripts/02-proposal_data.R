@@ -7,6 +7,7 @@ library(lubridate)
 library(flextable)
 library(tableone)
 library(here)
+library(data.table)
 source("themes.R")
 
 
@@ -28,7 +29,7 @@ modif_art <- pro_read("modif_art.rds")
 fup <- pro_read("fup.rds")
 tail <- pro_read("tail.rds")
 pat <- pro_read("pat.rds")
-
+lab <- pro_read("lab.rds")
 
 
 # Preparation -------------------------------------------------------------
@@ -195,6 +196,119 @@ pop_det <- pat %>%
 
 full <- full %>% 
   left_join(pop_det, by = "id")
+
+
+
+
+
+# Viral failure -----------------------------------------------------------
+
+# Definition used from A. Scherrer in CID 2016
+# The high-risk group included patients who
+# had ever experienced a virological failure or who were treated
+# with single- or dual-NRTI therapy for >28 days. A virological
+# failure was defined as either 2 consecutive viral loads >500
+# HIV-1 RNA copies/mL or 1 viral load >500 HIV-1 RNA copies/mL followed 
+# by a treatment change if the patient had experienced ≥180 days of 
+# continuous ART or ≥90 days of ART if
+# viral suppression was reached (<50 HIV-1 RNA copies/mL).
+
+
+
+# Single or dual NRTI treatment in the past
+nrti_mono <- modif_art %>% 
+  filter(id %in% full$id) %>% 
+  group_by(id) %>% 
+  mutate(no_third = (num_nnrti + num_pi + num_ntrti + 
+                       num_fi + num_others + num_inti) == 0) %>% 
+  summarise(nrti_mono = any(num_nrti <= 2 & no_third & !is.na(treatment)))
+
+
+
+# Viral failure
+art <- modif_art %>% 
+  filter(id %in% full$id) %>% 
+  select(-(num_art:precision))
+
+rna <- lab %>% 
+  select(id, rna, labdate) %>% 
+  drop_na() %>% 
+  filter(id %in% full$id)
+
+
+# set.seed(123)
+# smpl <- sample(unique(full$id), 2)
+
+# art %>% 
+#   filter(id %in% smpl) %>% 
+#   View()
+
+
+on_art <- art %>% 
+  filter(id %in% full$id) %>%
+  group_by(id) %>% 
+  mutate(on_art = as.numeric(!is.na(treatment))) %>% 
+  mutate(p = cumsum(on_art != lag(on_art, default = 2))) %>% 
+  group_by(id, p) %>% 
+  summarise(start = first(moddate), 
+            stop = last(enddate), 
+            on_art = max(on_art),
+            .groups = "drop") %>% 
+  mutate(stop = if_else(is.na(stop), dmy("01.01.2030"), stop))
+
+# rna_sub <- rna %>% 
+#   filter(id %in% full$id)
+# 
+# rna_sub %>% View("rna")
+# on_art %>% View("art")
+
+
+setDT(rna);setDT(on_art)
+
+comb_art <- on_art[rna, 
+                   on = .(id, start <= labdate, stop >= labdate), 
+                   .(id, rna = i.rna, 
+                     rna_date = i.labdate, 
+                     art_period = x.p, 
+                     on_art = x.on_art, 
+                     period_start = x.start, 
+                     period_stop = x.stop)] %>% 
+  as_tibble()
+
+
+
+comb_art %>% 
+  mutate(change = if_else(on_art != lag(on_art, default = 2) & on_art == 1, 
+                          "X", "")) %>% 
+  View()
+
+
+
+
+comb_art %>% 
+  group_by(id, rna_date, art_period) %>% 
+  filter(id %in% smpl) %>% 
+  ggplot(aes(x = rna_date, y = rna)) +
+  geom_line(aes(group = id)) +
+  geom_point(aes(color = factor(on_art))) +
+  facet_wrap(~id) +
+  scale_y_log10()
+
+
+comb_art %>% 
+  filter(id %in% smpl) %>% 
+  print(n = 220)
+
+rna %>% 
+  filter(id %in% smpl) %>% 
+  group_by(id) %>% 
+  # Flag virological failure
+  mutate(flag = if_else(rna > 500 & lag(rna) <= 500, "X", "")) %>% 
+  View("rna")
+
+
+
+
 
 
 
