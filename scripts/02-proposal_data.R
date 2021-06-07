@@ -16,7 +16,7 @@ source("themes.R")
 
 # remove backbones from treatment string
 drop_backbone <- function(string) {
-  string <- str_remove_all(string, "ABC|3TC|ETC|TAF|TDF|COB|RTV|AZT")
+  string <- str_remove_all(string, "ABC|3TC|ETC|TAF|TDF|COB|RTV|AZT|DDI|D4T")
   str_squish(string)
 }
 
@@ -35,14 +35,14 @@ lab <- pro_read("lab.rds")
 # Preparation -------------------------------------------------------------
 
 
-# Restrict analysis to individuals with active follow-up after 1.1.20
+# Restrict analysis to individuals with active follow-up after 1.11.13 (Genvoya)
 recent <- fup %>% 
   select(id, fupdate) %>% 
   arrange(id, desc(fupdate)) %>% 
   group_by(id) %>% 
   slice(1) %>% 
   ungroup() %>% 
-  filter(fupdate >= dmy("01.01.2020"))
+  filter(fupdate >= dmy("01.11.2013"))
 
 
 # Calculate number of classes
@@ -61,17 +61,59 @@ art <- modif_art %>%
 
 # Treated critera: 
 # - at least 2 classes, of which 1 has to be a boosted regime
-# - switched to either DTG/F/TAF, BIG/F/TAF, EVG/c/F/TAF or DTG/ABC/3TC
+# - switched to either:
+
+simplified_treatments <- c(
+  # 2 NRTI + INSTI (rec)
+  "DTG ETC TAF", 
+  "DTG ETC TDF",
+  "3TC DTG TDF", 
+  "BIC ETC TAF", 
+  "3TC ABC DTG",
+  "ETC RGV TDF", 
+  "ETC RGV TAF",
+  "3TC RGV TDF",
+  
+  # 1 NRTI + 1 INSTI (rec)
+  "3TC DTG",
+  
+  # 2 NRTIs + 1 NNRTI (alt)
+  "3TC DOR TDF", 
+  "DOR ETC TAF",
+  "ETC RPV TDF", 
+  "ETC RPV TAF",
+  
+  # 2 NRTIs + PI (alt)
+  "DRV ETC RTV TDF", 
+  "DRV ETC RTV TAF", 
+  "COB DRV ETC TAF", 
+  "3TC ABC RGV", 
+  "COB ETC EVG TDF",
+  "COB ETC EVG TAF", 
+  
+  # 2 NRTI + 1 NNRTI (alt)
+  "3TC ABC EFV", 
+  "EFV ETC TDF", 
+  "EFV ETC TAF", 
+  
+  # 2 NRTI + 1 PI
+  "3TC ABC ATV RTV", 
+  "3TC ABC DRV RTV", 
+  "3TC ABC COB DRV", 
+  "ATV ETC RTV TAF", 
+  "ATV ETC RTV TDF", 
+  
+  # 1 INSTI + 1 PI
+  "DRV RGV RTV", 
+  "DRV DTG RTV")
+
 
 treat <- art %>% 
   # Now, apply complicated filter
   mutate(flag = if_else(classes_n == 1 & 
                         lag(classes_n > 1) & 
-                        treatment %in% c("DTG ETC TAF", 
-                                         "BIC ETC TAF", 
-                                         "3TC ABC DTG", 
-                                         "COB ETC EVG TAF") & 
-                        str_detect(lag(treatment), "RTV|COB"),
+                        treatment %in% simplified_treatments & 
+                        moddate >= dmy("01.11.2013"),
                         "X", "")) %>% 
   mutate(switch = any(flag == "X"), 
          switch_date = if_else(flag == "X", moddate, NA_real_)) %>% 
@@ -100,15 +142,15 @@ treat <- art %>%
 
 # Control group inclusion = 
 control <- art %>% 
+  ungroup() %>% 
   mutate(flag = if_else(classes_n > 1 & 
-                        str_detect(treatment, "RTV|COB") & 
-                        moddate == last(moddate), 
+                        moddate >= dmy("01.11.2013"), 
                         "X", "")) %>% 
+  group_by(id) %>% 
   filter(any(flag == "X")) %>% 
   mutate(switch = FALSE) %>% 
-  arrange(id, desc(moddate)) %>% 
-  select(id, last_art = current_art, switch) %>% 
-  slice(1)
+  arrange(id, moddate) %>% 
+  ungroup()
 
 
 # There are some individuals in the control group. This is because they simplified, 
@@ -120,29 +162,60 @@ control <- control %>%
   filter(!(id %in% treat$id))
 
 
-# I don't want individuals who have DDI or D4T or so in their final regime, this
-# is not current practice so I exlcude them here.
 
-control <- control %>% 
-  filter(!str_detect(last_art, "DDI|D4T"))
 
-# Join them together
+# Baseline date -----------------------------------------------------------
+# There is an error in ID 51171, it says 8020 instead fo 2020, correct it.
+treat$switch_date[treat$id == 51171] <- treat$switch_date[treat$id == 51171] - years(6000)
+
+# Same for ID 42485, it says 2917 instead of 2017
+treat$switch_date[treat$id == 42485] <- treat$switch_date[treat$id == 42485] - years(900)
+
+
+# I take a random sample of the switch dates and assign them to the control
+
+
+set.seed(123)
+switch_dates_ctrl <- tibble(id = unique(control$id), 
+                            switch_date = sample(treat$switch_date, 
+                                                 size = length(unique(control$id)), 
+                                                 replace = TRUE))
+
+# Now, add new baseline dates to control df, and then take closest treatment
+# prior to baseline date
+
+control_n1 <- control %>% 
+  left_join(switch_dates_ctrl, by = "id") %>% 
+  mutate(flag2 = as.numeric(switch_date - moddate)) %>%
+  group_by(id, before = flag2 >= 0) %>% 
+  mutate(flag3 = if_else(before == TRUE, min(flag2), NA_real_)) %>% 
+  filter(flag2 == flag3) %>%
+  ungroup() %>% 
+  select(id, bl_treatment = treatment, bl_classes_n = classes_n, moddate, 
+         switch, bl_date = switch_date, 
+         days_started_bf_bl = flag2) %>% 
+  mutate(bl_treatment_s = drop_backbone(bl_treatment)) %>% 
+  filter(bl_classes_n > 1)
+  
+
+# Join treated and control together
 full <- treat %>% 
-  full_join(control) %>% 
-  mutate(last_art_s = drop_backbone(last_art)) %>% 
-  relocate(last_art_s, .after = last_art)
+  full_join(control_n1) %>% 
+  relocate(bl_treatment_s, .after = bl_treatment)
 
-
+# Add last fup to dataset
 full <- full %>% 
   left_join(recent %>% select(id, fupdate)) %>% 
   rename(last_fup = fupdate)
 
 
+# Assess the distribution of baseline dates
+full <- full %>% 
+  mutate(baseline_date = if_else(switch == TRUE, switch_date, bl_date))
+
 full %>% 
-  # filter(last_fup >= dmy("01.01.2020")) %>% 
-  count(comp_reg_s, simple_reg_s, sort = T) %>% 
-  flextable() %>% 
-  autofit()
+  ggplot(aes(x = baseline_date)) + 
+  geom_density(aes(fill = switch), alpha = 0.5, adjust = 0.5)
 
 
 
@@ -176,6 +249,9 @@ source <- fup %>%
 
 # Calculate number of changes in database
 n_treatments <- modif_art %>% 
+  left_join(full %>% select(id, baseline_date)) %>% 
+  filter(id %in% full$id) %>% 
+  filter(moddate < baseline_date) %>% 
   group_by(id) %>% 
   summarise(n_treatments = n())
 
@@ -197,43 +273,8 @@ full <- full %>%
   left_join(pop_det, by = "id")
 
 
-
-
 # Baseline Date -----------------------------------------------------------
 
-# I assign a random baseline for every control patient
-
-
-# There is an error in ID 51171, it says 8020 instead fo 2020, correct it.
-full$switch_date[full$id == 51171] <- full$switch_date[full$id == 51171] - years(6000)
-
-# Same for ID 42485, it says 2917 instead of 2017
-full$switch_date[full$id == 42485] <- full$switch_date[full$id == 42485] - years(900)
-
-switch_dates <- full %>% 
-  filter(switch == TRUE) %>% 
-  pull(switch_date)
-
-
-n_non_switchers <- full %>% 
-  filter(switch == FALSE) %>% 
-  nrow()
-
-
-# Select random samples of switch_dates
-set.seed(123)
-bl_dates_non_switchers <- sample(switch_dates, n_non_switchers, replace = TRUE)
-
-# Assign them to baseline_date
-full$baseline_date <- full$switch_date
-full$baseline_date[full$switch == FALSE] <- bl_dates_non_switchers
-
-full$baseline_date %>% summary()
-
-# Looks good
-full %>% 
-  ggplot(aes(x = baseline_date)) + 
-  geom_density(aes(fill = switch), alpha = 0.5, adjust = 0.5)
 
 
 # Calculate age at baseline
@@ -353,7 +394,7 @@ cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
               "source", "center")
 
 # Create vector used later for indentation in flextable
-cvars <- paste0(c(vars, "^n"), collapse = "|^")
+cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
 
 
 # Table 1
@@ -363,7 +404,9 @@ tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars,
 t_patchar <- (print(tab1, nonnormal = c("age", "n_treatments"), 
                    printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
   as_tibble(rownames = "Variable") %>% 
-  select(-test) %>% 
+  select(-test) %>%
+  mutate(Variable = if_else(str_detect(Variable, "n_treatments"), 
+                            "Prior ART changes (median [IQR])", Variable)) %>% 
   rename("No simplification" = `FALSE`, 
          "Simplification" = `TRUE`) %>% 
   flextable() %>% 
@@ -389,8 +432,8 @@ t_switch <- full %>%
 # ART regimes of those who remained on complicated ART
 t_control <- full %>% 
   filter(switch == FALSE) %>% 
-  count(last_art_s, sort = T) %>% 
-  rename("Last ART" = last_art_s) %>%
+  count(bl_treatment_s, sort = T) %>% 
+  rename("Baseline ART" = bl_treatment_s) %>%
   flextable() %>% 
   f_theme_surial()
 
