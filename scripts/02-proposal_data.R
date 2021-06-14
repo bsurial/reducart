@@ -35,7 +35,7 @@ lab <- pro_read("lab.rds")
 # Preparation -------------------------------------------------------------
 
 
-# Restrict analysis to individuals with active follow-up after 1.11.13 (Genvoya)
+# identify individuals with active follow-up after 1.11.13 (Stribild)
 recent <- fup %>% 
   select(id, fupdate) %>% 
   arrange(id, desc(fupdate)) %>% 
@@ -61,7 +61,7 @@ art <- modif_art %>%
 
 # Treated critera: 
 # - at least 2 classes, of which 1 has to be a boosted regime
-# - switched to either:
+# - switched to one of the simplified regimens listed below (based on EACS)
 
 simplified_treatments <- c(
   # 2 NRTI + INSTI (rec)
@@ -108,8 +108,11 @@ simplified_treatments <- c(
   "DRV DTG RTV")
 
 
+# Treated:
+# Patients who switched from 2 to 1 anchor agent after 11/13, 
+# and the regimen they switched to was one of the EACS recommended ones.
+
 treat <- art %>% 
-  # Now, apply complicated filter
   mutate(flag = if_else(classes_n == 1 & 
                         lag(classes_n > 1) & 
                         treatment %in% simplified_treatments & 
@@ -140,7 +143,9 @@ treat <- art %>%
 
 
 
-# Control group inclusion = 
+# Control group
+# More than 2 anchor agents, after 11/13
+
 control <- art %>% 
   ungroup() %>% 
   mutate(flag = if_else(classes_n > 1 & 
@@ -247,13 +252,15 @@ source <- fup %>%
   select(id, center, source)
 
 
-# Calculate number of changes in database
+# Calculate number of changes in database and pre-treatment time
 n_treatments <- modif_art %>% 
   left_join(full %>% select(id, baseline_date)) %>% 
   filter(id %in% full$id) %>% 
   filter(moddate < baseline_date) %>% 
   group_by(id) %>% 
-  summarise(n_treatments = n())
+  summarise(n_treatments = n(), 
+            years_treatment = as.numeric(sum(enddate - moddate, 
+                                            na.rm = TRUE)/365.25))
 
 
 # Join together
@@ -276,11 +283,19 @@ full <- full %>%
 # Baseline Date -----------------------------------------------------------
 
 
-
 # Calculate age at baseline
 full <- full %>% 
   mutate(age = year(baseline_date) - born) %>% 
   select(-born)
+
+
+# Time since HIV diagnosis (if HIV posdate = NA, take regdate)
+full <- full %>% 
+  left_join(pat %>% select(id, hiv_posdate, regdate)) %>% 
+  mutate(first_hiv = if_else(is.na(hiv_posdate), regdate, hiv_posdate)) %>% 
+  select(-(hiv_posdate:regdate)) %>% 
+  mutate(years_first_hiv = as.numeric(baseline_date - first_hiv) / 365.25)
+
 
 
 # Viral failure -----------------------------------------------------------
@@ -389,7 +404,8 @@ full <- full %>%
 
 # Define variables for table
 vars <- c("age", "male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-          "source", "center", "n_treatments")
+          "source", "center", "n_treatments", "years_first_hiv", 
+          "years_treatment")
 cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
               "source", "center")
 
@@ -438,6 +454,16 @@ t_control <- full %>%
   f_theme_surial()
 
 
+# Look at individuals who have DOR, as Gilles will be interested in those
+modif_art %>% 
+  filter(str_detect(treatment, "DOR")) %>% 
+  arrange(id, desc(moddate)) %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  count(treatment, sort = T) %>% 
+  flextable() %>% 
+  f_theme_surial()
 
 # Output ------------------------------------------------------------------
 
