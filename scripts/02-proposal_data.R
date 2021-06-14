@@ -280,8 +280,6 @@ full <- full %>%
   left_join(pop_det, by = "id")
 
 
-# Baseline Date -----------------------------------------------------------
-
 
 # Calculate age at baseline
 full <- full %>% 
@@ -296,7 +294,17 @@ full <- full %>%
   select(-(hiv_posdate:regdate)) %>% 
   mutate(years_first_hiv = as.numeric(baseline_date - first_hiv) / 365.25)
 
+# Baseline Treatment an N of anchor agents
+full <- full %>% 
+  mutate(baseline_treatment = if_else(switch == TRUE, comp_reg, bl_treatment),
+         baseline_n_anchor = str_count(drop_backbone(baseline_treatment), "\\S+"))
 
+
+# Baseline anchor agents lumped
+full <- full %>% 
+  mutate(baseline_anchors_fct = drop_backbone(baseline_treatment)) %>% 
+  mutate(baseline_anchors_fct = fct_lump_n(baseline_anchors_fct, 10), 
+         baseline_anchors_fct = fct_infreq(baseline_anchors_fct))
 
 # Viral failure -----------------------------------------------------------
 
@@ -404,10 +412,10 @@ full <- full %>%
 
 # Define variables for table
 vars <- c("age", "male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-          "source", "center", "n_treatments", "years_first_hiv", 
-          "years_treatment")
+          "source", "n_treatments", "years_first_hiv", 
+          "years_treatment", "baseline_n_anchor", "baseline_anchors_fct")
 cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-              "source", "center")
+              "source", "baseline_anchors_fct")
 
 # Create vector used later for indentation in flextable
 cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
@@ -417,7 +425,8 @@ cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
 tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars, 
                data = full)
   
-t_patchar <- (print(tab1, nonnormal = c("age", "n_treatments"), 
+t_patchar <- (print(tab1, nonnormal = c("age", "n_treatments", "years_first_hiv",
+                                        "years_treatment", "baseline_n_anchor"), 
                    printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
   as_tibble(rownames = "Variable") %>% 
   select(-test) %>%
