@@ -45,7 +45,7 @@ recent <- fup %>%
   filter(fupdate >= dmy("01.11.2013"))
 
 
-# Calculate number of classes
+# Calculate n of classes including NRTIs
 art <- modif_art %>% 
   mutate(dur = as.numeric(enddate - moddate)) %>% 
   # Exclude time intervals where we have no data, but were less than 60 days
@@ -53,10 +53,18 @@ art <- modif_art %>%
   arrange(id, moddate) %>% 
   group_by(id) %>% 
   mutate(current_art = last(treatment)) %>% 
-  select(-(num_art:precision)) %>% 
-  # Compute number of classes
-  mutate(classes = drop_backbone(treatment),
-         classes_n = str_count(classes, "\\S+")) 
+  ungroup() %>% 
+  mutate(num_pi = if_else(str_detect(treatment, "(RTV)"),
+                          num_pi - 1, num_pi)) %>%
+  mutate(num_others = if_else(str_detect(treatment, "(COB)"),
+                              num_others - 1, num_others)) %>%
+  mutate(classes_n = (num_nrti != 0 | num_ntrti != 0) + 
+           (num_nnrti != 0) + 
+           (num_pi != 0) + 
+           (num_inti !=0) + 
+           (num_others != 0) + 
+           (num_fi != 0)) %>% 
+  select(-(num_art:precision))
 
 
 # Treated critera: 
