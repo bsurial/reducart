@@ -73,12 +73,16 @@ art <- modif_art %>%
 # Patients who switched from 2 to 1 anchor agent after 11/13, 
 # and the regimen they switched to was one of the EACS recommended ones.
 
-treat <- art %>% 
-  mutate(flag = if_else(classes_n == 1 & 
-                        lag(classes_n > 1) & 
-                        treatment %in% simplified_treatments & 
-                        moddate >= dmy("01.11.2013"),
+# Treated are those who switched from 3 to 2 classes
+# Patients needed to be on the 2-class regimen for at least 30 days
+treat <- art %>%
+  mutate(flag = if_else(classes_n == 2 & 
+                          lag(classes_n > 2) & 
+                          moddate >= dmy("01.11.2013") & 
+                          # at least 30 days or NA (means current)
+                          (dur >= 30 | is.na(dur)),  
                         "X", "")) %>% 
+  group_by(id) %>% 
   mutate(switch = any(flag == "X"), 
          switch_date = if_else(flag == "X", moddate, NA_real_)) %>% 
   filter(any(flag == "X")) %>% 
