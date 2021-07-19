@@ -135,12 +135,6 @@ control <- control %>%
 
 
 # Baseline date -----------------------------------------------------------
-# There is an error in ID 51171, it says 8020 instead fo 2020, correct it.
-treat$switch_date[treat$id == 51171] <- treat$switch_date[treat$id == 51171] - years(6000)
-
-# Same for ID 42485, it says 2917 instead of 2017
-treat$switch_date[treat$id == 42485] <- treat$switch_date[treat$id == 42485] - years(900)
-
 
 # I take a random sample of the switch dates and assign them to the control
 
