@@ -109,12 +109,12 @@ treat <- art %>%
 
 
 # Control group
-# More than 2 anchor agents, after 11/13
+# 3 or more classes, after 11/13
 
 control <- art %>% 
   ungroup() %>% 
-  mutate(flag = if_else(classes_n > 1 & 
-                        moddate >= dmy("01.11.2013"), 
+  mutate(flag = if_else(classes_n > 2 & 
+                          moddate >= dmy("01.11.2013"), 
                         "X", "")) %>% 
   group_by(id) %>% 
   filter(any(flag == "X")) %>% 
