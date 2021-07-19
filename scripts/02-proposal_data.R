@@ -67,53 +67,6 @@ art <- modif_art %>%
   select(-(num_art:precision))
 
 
-# Treated critera: 
-# - at least 2 classes, of which 1 has to be a boosted regime
-# - switched to one of the simplified regimens listed below (based on EACS)
-
-simplified_treatments <- c(
-  # 2 NRTI + INSTI (rec)
-  "DTG ETC TAF", 
-  "DTG ETC TDF",
-  "3TC DTG TDF", 
-  "BIC ETC TAF", 
-  "3TC ABC DTG",
-  "ETC RGV TDF", 
-  "ETC RGV TAF",
-  "3TC RGV TDF",
-  
-  # 1 NRTI + 1 INSTI (rec)
-  "3TC DTG",
-  
-  # 2 NRTIs + 1 NNRTI (alt)
-  "3TC DOR TDF", 
-  "DOR ETC TAF",
-  "ETC RPV TDF", 
-  "ETC RPV TAF",
-  
-  # 2 NRTIs + PI (alt)
-  "DRV ETC RTV TDF", 
-  "DRV ETC RTV TAF", 
-  "COB DRV ETC TAF", 
-  "3TC ABC RGV", 
-  "COB ETC EVG TDF",
-  "COB ETC EVG TAF", 
-  
-  # 2 NRTI + 1 NNRTI (alt)
-  "3TC ABC EFV", 
-  "EFV ETC TDF", 
-  "EFV ETC TAF", 
-  
-  # 2 NRTI + 1 PI
-  "3TC ABC ATV RTV", 
-  "3TC ABC DRV RTV", 
-  "3TC ABC COB DRV", 
-  "ATV ETC RTV TAF", 
-  "ATV ETC RTV TDF", 
-  
-  # 1 INSTI + 1 PI
-  "DRV RGV RTV", 
-  "DRV DTG RTV")
 
 
 # Treated:
