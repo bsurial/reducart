@@ -8,6 +8,7 @@ library(flextable)
 library(tableone)
 library(here)
 library(data.table)
+library(gtsummary)
 source("themes.R")
 
 
@@ -22,6 +23,19 @@ drop_backbone <- function(string) {
 
 
 
+# Themes ------------------------------------------------------------------
+
+# Set GT Summary Theme
+my_theme <-
+  list(
+    "tbl_summary-str:default_con_type" = "continuous",
+    "tbl_summary-str:continuous_stat" = "{median} ({p25} to {p75})",
+    "style_number-arg:big.mark" = "",
+    "tbl_summary-arg:missing_text" = "(Missing)"
+  )
+set_gtsummary_theme(my_theme)
+
+
 # Data --------------------------------------------------------------------
 
 
@@ -30,6 +44,7 @@ fup <- pro_read("fup.rds")
 tail <- pro_read("tail.rds")
 pat <- pro_read("pat.rds")
 lab <- pro_read("lab.rds")
+resi <- pro_read("resi.rds")
 
 
 # Preparation -------------------------------------------------------------
@@ -339,11 +354,11 @@ comb_art <- on_art[rna,
   left_join(full %>% select(id, baseline_date), by = "id")
 
 
-# Code failure as having 2x RNA > 500 while being on ART >= 180 days, 
+# Code failure as having 2x RNA > 200 while being on ART >= 180 days, 
 # and only count failures PRIOR to baseline
 failure_long <- comb_art %>% 
   group_by(id) %>% 
-  mutate(flag = if_else(rna > 500 & lag(rna) > 500 & on_art == 1, 
+  mutate(flag = if_else(rna > 200 & lag(rna) > 200 & on_art == 1, 
                         "X", "")) %>% 
   group_by(id, art_period) %>% 
   mutate(t = as.numeric(rna_date - first(period_start)), 
@@ -366,41 +381,86 @@ full <- full %>%
 
 
 
+
+# Presence of Resistance Testing ------------------------------------------
+
+pat_with_resi <- full %>% 
+  select(id, baseline_date) %>% 
+  left_join(resi) %>% 
+  filter(baseline_date >= resistdate) %>% 
+  select(id, baseline_date) %>% 
+  distinct() %>% 
+  mutate(resi_available = TRUE)
+
+
+full <- full %>% 
+  left_join(pat_with_resi, by = c("id", "baseline_date")) %>% 
+  mutate(resi_available = replace_na(resi_available, FALSE))
+
+
 # Tables   -----------------------------------------------------------------
 
 
 # Define variables for table
 vars <- c("age", "male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-          "source", "n_treatments", "years_first_hiv", 
-          "years_treatment", "baseline_n_anchor", "baseline_anchors_fct")
+          "resi_available", "n_treatments", "source", "years_first_hiv", 
+          "years_treatment", "baseline_anchors_fct")
+
 cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-              "source", "baseline_anchors_fct")
+              "source", "baseline_anchors_fct", "resi_available")
 
 # Create vector used later for indentation in flextable
 cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
 
 
-# Table 1
-tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars, 
-               data = full)
-  
-t_patchar <- (print(tab1, nonnormal = c("age", "n_treatments", "years_first_hiv",
-                                        "years_treatment", "baseline_n_anchor"), 
-                   printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
-  as_tibble(rownames = "Variable") %>% 
-  select(-test) %>%
-  mutate(Variable = if_else(str_detect(Variable, "n_treatments"), 
-                            "Prior ART changes (median [IQR])", Variable)) %>% 
-  rename("No simplification" = `FALSE`, 
-         "Simplification" = `TRUE`) %>% 
-  flextable() %>% 
-  padding(i = ~ !str_detect(Variable, cvars), 
-          j = 1, padding.left = 14) %>% 
-  bold(i = ~ str_detect(Variable, cvars), 
-       j = 1) %>% 
+t_patchar <- full %>% 
+  select(switch, one_of(vars)) %>% 
+  mutate(switch = if_else(switch == TRUE, 
+                          "Switched to a 2-class regimen", 
+                          "Remained on 3 or more drug classes")) %>% 
+  labelled::set_variable_labels(
+    age = "Age (years)",
+    male = "Male sex",
+    ethnicity = "Ethnicity",
+    riskgroup = "HIV transmission group",
+    nrti_mono = "Received NRTI monotherapy",
+    any_failure = "Experienced virological failure",
+    resi_available = "Resistance testing available",
+    n_treatments = "Median N of prior ART changes",
+    source = "Data source",
+    years_first_hiv = "Median time since HIV diagnosis (years)",
+    years_treatment = "Median time since first ART (years)",
+    baseline_anchors_fct = "Anchor agents"
+  ) %>% 
+  tbl_summary(by = switch, missing = "no") %>% 
+  bold_labels() %>% 
+  as_flex_table() %>% 
   f_theme_surial() %>% 
-  align(j = 2:4, align = "center") %>% 
-  autofit())
+  align(j  = 2:3, align = "center", part = "all") %>% 
+  width(j = 2:3, width = 1)
+
+
+# # Table 1
+# tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars, 
+#                data = full)
+#   
+# (t_patchar <- print(tab1, nonnormal = c("age", "n_treatments", "years_first_hiv",
+#                                         "years_treatment", "baseline_n_anchor"), 
+#                    printToggle = FALSE, contDigits = 1, dropEqual = TRUE) %>% 
+#   as_tibble(rownames = "Variable") %>% 
+#   select(-test) %>%
+#   mutate(Variable = if_else(str_detect(Variable, "n_treatments"), 
+#                             "Prior ART changes (median [IQR])", Variable)) %>% 
+#   rename("No simplification" = `FALSE`, 
+#          "Simplification" = `TRUE`) %>% 
+#   flextable() %>% 
+#   padding(i = ~ !str_detect(Variable, cvars), 
+#           j = 1, padding.left = 14) %>% 
+#   bold(i = ~ str_detect(Variable, cvars), 
+#        j = 1) %>% 
+#   f_theme_surial() %>% 
+#   align(j = 2:4, align = "center") %>% 
+#   autofit())
 
 
 # ART regimes of those who had simplifications
