@@ -398,13 +398,47 @@ full <- full %>%
   mutate(resi_available = replace_na(resi_available, FALSE))
 
 
+
+
+
+# Peak HIV RNA and Nadir CD4 ----------------------------------------------
+
+max_rna <- full %>% 
+  select(id, baseline_date) %>% 
+  left_join(rna, by = "id") %>% 
+  filter(labdate <= baseline_date) %>% 
+  group_by(id) %>% 
+  summarise(max_rna = max(rna, na.rm = TRUE)) %>% 
+  mutate(max_rna_log = if_else(max_rna < 20, 0, log(max_rna)))
+
+
+cd4 <- lab %>% 
+  select(id, cd4, labdate) %>% 
+  drop_na()
+
+nadir_cd4 <- full %>% 
+  select(id, baseline_date) %>% 
+  left_join(cd4, by = "id") %>% 
+  filter(labdate <= baseline_date) %>% 
+  group_by(id) %>% 
+  summarise(nadir_cd4 = min(cd4, na.rm = TRUE))
+
+
+full <- full %>% 
+  left_join(nadir_cd4, by = "id") %>% 
+  left_join(max_rna, by = "id")
+  
+
+
+
 # Tables   -----------------------------------------------------------------
 
 
 # Define variables for table
-vars <- c("age", "male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-          "resi_available", "n_treatments", "source", "years_first_hiv", 
-          "years_treatment", "baseline_anchors_fct")
+vars <- c("age", "male", "ethnicity", "riskgroup", "max_rna_log", "nadir_cd4", 
+          "nrti_mono", "any_failure", "resi_available", "n_treatments", 
+          "source", "years_first_hiv", "years_treatment", 
+          "baseline_anchors_fct")
 
 cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
               "source", "baseline_anchors_fct", "resi_available")
@@ -413,31 +447,39 @@ cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
 cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
 
 
-t_patchar <- full %>% 
-  select(switch, one_of(vars)) %>% 
-  mutate(switch = if_else(switch == TRUE, 
-                          "Switched to a 2-class regimen", 
-                          "Remained on 3 or more drug classes")) %>% 
-  labelled::set_variable_labels(
-    age = "Age (years)",
-    male = "Male sex",
-    ethnicity = "Ethnicity",
-    riskgroup = "HIV transmission group",
-    nrti_mono = "Received NRTI monotherapy",
-    any_failure = "Experienced virological failure",
-    resi_available = "Resistance testing available",
-    n_treatments = "Median N of prior ART changes",
-    source = "Data source",
-    years_first_hiv = "Median time since HIV diagnosis (years)",
-    years_treatment = "Median time since first ART (years)",
-    baseline_anchors_fct = "Anchor agents"
-  ) %>% 
-  tbl_summary(by = switch, missing = "no") %>% 
-  bold_labels() %>% 
-  as_flex_table() %>% 
-  f_theme_surial() %>% 
-  align(j  = 2:3, align = "center", part = "all") %>% 
-  width(j = 2:3, width = 1)
+(t_patchar <- full %>% 
+    select(switch, one_of(vars)) %>% 
+    mutate(switch = if_else(switch == TRUE, 
+                            "Switched to a 2-class regimen", 
+                            "Remained on 3 or more drug classes")) %>% 
+    labelled::set_variable_labels(
+      age = "Age, years (IQR)",
+      male = "Male sex",
+      ethnicity = "Ethnicity",
+      riskgroup = "HIV transmission group",
+      max_rna_log = "Pretreatment HIV viral load, log cp/mL (IQR)",
+      nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)",
+      nrti_mono = "Received NRTI monotherapy",
+      any_failure = "Experienced virological failure",
+      resi_available = "Resistance testing available",
+      n_treatments = "Median N of prior ART changes",
+      source = "Data source",
+      years_first_hiv = "Median time since HIV diagnosis, years (IQR)",
+      years_treatment = "Median time since first ART, years (IQR)",
+      baseline_anchors_fct = "Anchor agents"
+    ) %>% 
+    tbl_summary(by = switch, 
+                missing = "no",
+                digits = all_continuous() ~ 1) %>% 
+    bold_labels() %>% 
+    as_flex_table() %>% 
+    f_theme_surial() %>% 
+    bold(i = 1, part = "header") %>% 
+    fontsize(size = 10, part = "body") %>% 
+    align(j  = 2:3, align = "center", part = "all") %>% 
+    width(j = 2:3, width = 1.3))
+
+
 
 
 # # Table 1
