@@ -463,6 +463,14 @@ full <- full %>%
   left_join(hiv_supp, by = "id")
 
 
+
+
+# Boosted at baseline -----------------------------------------------------
+
+full <- full %>% 
+  mutate(boosted = str_detect(baseline_treatment, "RTV|COB"))
+
+
 # Tables   -----------------------------------------------------------------
 
 
@@ -471,10 +479,10 @@ vars <- c("age", "male", "ethnicity", "riskgroup", "max_rna_log", "nadir_cd4",
           "cd4_baseline", "nrti_mono", "any_failure", 
           "resi_available", "n_treatments", 
           "source", "years_first_hiv", "years_treatment", 
-          "baseline_anchors_fct")
+          "baseline_anchors_fct", "boosted")
 
 cat_vars <- c("male", "ethnicity", "riskgroup", "nrti_mono", "any_failure",
-              "source", "baseline_anchors_fct", "resi_available")
+              "source", "baseline_anchors_fct", "resi_available", "boosted")
 
 # Create vector used later for indentation in flextable
 cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
@@ -500,7 +508,8 @@ cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
       source = "Data source",
       years_first_hiv = "Median time since HIV diagnosis, years (IQR)",
       years_treatment = "Median time since first ART, years (IQR)",
-      baseline_anchors_fct = "Anchor agents"
+      baseline_anchors_fct = "Anchor agents",
+      boosted = "Baseline regimen includes booster"
     ) %>% 
     tbl_summary(by = switch, 
                 missing = "no",
@@ -516,7 +525,9 @@ cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
     width(j = 2:3, width = 1.3))
 
 
-
+janitor::tabyl(full$boosted) %>% 
+  janitor::adorn_pct_formatting() %>% 
+  gt::gt()
 
 # # Table 1
 # tab1 <- CreateTableOne(vars = vars, strata = "switch", factorVars = cat_vars, 
