@@ -431,12 +431,45 @@ full <- full %>%
 
 
 
+
+# HIV RNA and CD4 at baseline
+cd4_bl <- full %>% 
+  select(id, baseline_date) %>% 
+  left_join(cd4) %>% 
+  mutate(diff = abs(baseline_date - labdate)) %>% 
+  filter(diff <= 365) %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  select(id, cd4_baseline = cd4)
+
+
+full <- full %>% 
+  left_join(cd4_bl, by = "id")
+
+
+hiv_supp <- full %>% 
+  select(id, baseline_date) %>% 
+  left_join(rna, by = "id") %>% 
+  mutate(rna_supp = rna < 50) %>% 
+  mutate(diff = abs(baseline_date - labdate)) %>% 
+  filter(diff <= 180) %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  select(id, hiv_suppressed = rna_supp, hiv_baseline = rna)
+
+full <- full %>% 
+  left_join(hiv_supp, by = "id")
+
+
 # Tables   -----------------------------------------------------------------
 
 
 # Define variables for table
 vars <- c("age", "male", "ethnicity", "riskgroup", "max_rna_log", "nadir_cd4", 
-          "nrti_mono", "any_failure", "resi_available", "n_treatments", 
+          "cd4_baseline", "nrti_mono", "any_failure", 
+          "resi_available", "n_treatments", 
           "source", "years_first_hiv", "years_treatment", 
           "baseline_anchors_fct")
 
@@ -459,6 +492,7 @@ cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
       riskgroup = "HIV transmission group",
       max_rna_log = "Pretreatment HIV viral load, log cp/mL (IQR)",
       nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)",
+      cd4_baseline = "Median CD4 count, cells/µL (IQR)",
       nrti_mono = "Received NRTI monotherapy",
       any_failure = "Experienced virological failure",
       resi_available = "Resistance testing available",
@@ -470,7 +504,9 @@ cvars <- paste0(c(vars, "^n", "Prior ART changes"), collapse = "|^")
     ) %>% 
     tbl_summary(by = switch, 
                 missing = "no",
-                digits = all_continuous() ~ 1) %>% 
+                digits = list(all_continuous() ~ 1, 
+                              nadir_cd4 ~ 0, 
+                              cd4_baseline ~ 0)) %>% 
     bold_labels() %>% 
     as_flex_table() %>% 
     f_theme_surial() %>% 
