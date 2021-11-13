@@ -12,6 +12,7 @@ df <- pro_read("02-proposal_population.rds")
 tail <- pro_read("tail.rds")
 art <- pro_read("modif_art.rds")
 lab <- pro_read("lab.rds")
+brand_dose <- pro_read("brand_dose.rds")
 
 rna <- lab %>% 
   select(id, rna, labdate) %>% 
@@ -70,7 +71,10 @@ rna_sub <- rna %>%
 
 time_supp_df <- rna_sub %>% 
   as_tibble() %>% 
-  mutate(suppressed = rna < 50) %>% 
+  # I allow blips below 200
+  mutate(blip = if_else(rna >= 50 & rna < 200 & lag(rna) < 50 & lead(rna) < 50, 
+                        TRUE, FALSE)) %>% 
+  mutate(suppressed = rna < 50 | blip == TRUE) %>% 
   group_by(id) %>% 
   mutate(time_suppressed = case_when(
     suppressed == FALSE ~ labdate - labdate, 
@@ -104,3 +108,28 @@ df_step2 <- time_supp_df[df_step1,
                                             as.numeric(trial_start - rna_date)))
 
 
+
+# Add drugs
+# Rifampicin
+rifa_df <- brand_dose %>% 
+  filter(str_detect(brand, "(J04AM0[2567])|(J04AB02)")) %>% 
+  mutate(rifamp = TRUE) %>% 
+  select(id, startdate, stopdate, rifamp, rifa_drug = var_desc)
+
+# Carboxamide derivatives (Carbamazepine, Oxcarbazepine etc)
+carbam_df <- brand_dose %>% 
+  filter(str_detect(brand, "N03AF0[1234]")) %>% 
+  mutate(carbam = TRUE) %>% 
+  select(id, startdate, stopdate, carbam, carbam_drug = var_desc)
+
+# Phenytoin and other hydantoin derivatives
+phenytoin_df <- brand_dose %>% 
+  filter(str_detect(brand, "N03AB0[12345]|N03AB5[24]")) %>% 
+  mutate(phenytoin = TRUE) %>% 
+  select(id, startdate, stopdate, phenytoin, phyentoin_drug = var_desc)
+
+# Primidone 
+primidone_df <- brand_dose %>% 
+  filter(str_detect(brand, "N03AA030")) %>% 
+  mutate(primidone = TRUE) %>% 
+  select(id, startdate, stopdate, primidone, primidone_drug = var_desc)
