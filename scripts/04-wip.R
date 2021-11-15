@@ -24,6 +24,23 @@ pat <- pro_read("pat.rds")
 
 
 
+# Add contemporary treatments ---------------------------------------------
+
+# TREATMENTS
+insti <- c("DTG|RGV|EVG|BIC")
+pi <- c("DRV|ATV|LPV|SQV|IDV|FAPV|NFV|TPV")
+nnrti <- c("EFV|NVP|RPV|ETV|DOR")
+booster <- c("RTV|COB")
+
+
+# FUNCTIONS
+
+# remove backbones from treatment string
+drop_backbone <- function(string) {
+  string <- str_remove_all(string, "ABC|3TC|ETC|TAF|TDF|COB|RTV|AZT|DDI|D4T")
+  str_squish(string)
+}
+
 # Create Trials -----------------------------------------------------------
 
 
@@ -37,7 +54,7 @@ trial_grid <- tibble(trial_start = seq(ymd('2013-06-01'),
 
 # Add id to grid
 trial_grid <- trial_grid %>% 
-  mutate(id = 31462)
+  mutate(id = 12601)
 
 
 
@@ -50,7 +67,7 @@ df_art <- df %>%
 
 # I first work on 1 patient, and extend that later on
 df_sub <- df_art %>% 
-  filter(id == 31462) %>% 
+  filter(id == 12601) %>% 
   select(id, treatment, moddate, enddate, switch) 
 
 # Since the last treatment is ongoin, I create a fictive "enddate in future"
@@ -76,8 +93,13 @@ df_step1 <- df_step1 %>%
          rna_stop = trial_start + 14)
 
 # Only work with one ID
+rna <- lab %>% 
+  select(id, rna, labdate) %>% 
+  drop_na()
+
+
 rna_sub <- rna %>% 
-  filter(id == 31462) 
+  filter(id == 12601) 
 
 
 
@@ -244,6 +266,8 @@ df_step6 <- primidone_df[df_step5,
   ungroup()
 
 
+df_step6 <- df_step6 %>% 
+  mutate(ci_drug = (rifamp + carbam + phenytoin + primidone) > 0)
 
 
 # Add adherence data ------------------------------------------------------
@@ -266,7 +290,7 @@ adhe_df <- adhe %>%
 
 # Calculate Time with adherence once every 2 weeks or better
 adhe_df <- adhe_df %>% 
-  filter(id == 31462) %>% 
+  filter(id == 12601) %>% 
   mutate(good_adh = missed_locf %in% 
            c("once a month", "never", "once every 2 weeks")) %>% 
   group_by(id) %>% 
@@ -304,6 +328,8 @@ df_step7 <- adhe_df[df_step6,
                       phenytoin_drug = i.phenytoin_drug, 
                       primidone = i.primidone, 
                       primidone_drug = i.primidone_drug, 
+                      ci_drug = i.ci_drug,
+                      good_adh = x.good_adh,
                       time_good_adh = x.time_good_adh, 
                       ad_date = x.ad_date, 
                       adherence = x.missed,
@@ -314,9 +340,12 @@ df_step7 <- adhe_df[df_step6,
   group_by(id, trial_nr) %>% 
   slice(1) %>%
   ungroup() %>% 
-  mutate(time_good_adh_actual = if_else(time_good_adh == 0, 0, 
+  mutate(time_good_adh_actual = if_else(good_adh == FALSE & 
+                                          time_good_adh == 0, 0, 
                                         time_good_adh + 
-                                          as.numeric(trial_start - ad_date))) 
+                                          as.numeric(trial_start - ad_date)),
+         time_good_adh_actual = if_else(time_good_adh_actual < 0, 0, 
+                                        time_good_adh_actual)) 
 
 
 
@@ -355,6 +384,7 @@ df_step8 <- crea_df[df_step7,
           phenytoin_drug = i.phenytoin_drug, 
           primidone = i.primidone, 
           primidone_drug = i.primidone_drug, 
+          ci_drug = i.ci_drug,
           time_good_adh = i.time_good_adh, 
           ad_date = i.ad_date, 
           adherence = i.adherence,
@@ -391,6 +421,43 @@ patchars <- pat %>%
 df_step9 <- df_step8 %>% 
   mutate(age = year(trial_start) - born) %>% 
   left_join(patchars, by = "id")
+
+
+
+
+
+# See whether patient has eligible treatment ------------------------------
+
+# Eligible means: 
+# Booster + 2 or more drugs of either NNRTI, PI or INST = current regimen
+# BIC or DTG based standrard therapy and just before current regimen = switch
+
+df_step10 <- df_step9 %>% 
+  mutate(booster = str_detect(treatment, booster),
+         insti = str_detect(treatment, insti),
+         nnrti = str_detect(treatment, nnrti), 
+         pi = str_detect(treatment, pi)) %>% 
+  mutate(elig_treatment = if_else(booster == TRUE & (insti + nnrti + pi) >1, 
+                                  1, 0), 
+         switch_treatment = if_else(booster == FALSE & 
+                                    str_detect(treatment, "BIC|DTG") & 
+                                    nnrti == FALSE & 
+                                    pi == FALSE & 
+                                    lag(elig_treatment == 1), 1, 0)) %>% 
+  relocate(treatment, .before = booster)
+
+
+
+
+# Assess eligibility for each trial ---------------------------------------
+
+elig_data <- df_step10 %>% 
+  mutate(elig = if_else(elig_treatment == 1 & 
+                          days_suppressed_actual >= 180 & 
+                          egfr >= 30 & 
+                          time_good_adh_actual >= 180 & 
+                          ci_drug == FALSE, 
+                        1, 0))
 
 
 
