@@ -333,7 +333,7 @@ crea_df <- lab2 %>%
                              sex = male, 
                              age = year(cre_date) - born, 
                              ethnicity = ethnicity == 2)) %>% 
-  select(-(born:male))
+  select(-(sex:male))
 
 # Window for Creatinine
 df_step7 <- df_step7 %>% 
@@ -362,10 +362,37 @@ df_step8 <- crea_df[df_step7,
           time_good_adh_actual = i.time_good_adh_actual, 
           crea = x.crea, 
           egfr = x.egfr, 
-          cre_date = x.cre_date)] %>% 
+          cre_date = x.cre_date, 
+          born = x.born)] %>% 
   as_tibble() %>% 
   arrange(id, trial_nr, abs(trial_start - cre_date)) %>% 
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
   ungroup()
+
+
+
+
+# Add patient characteristics -----------------------------------------------
+
+patchars <- pat %>% 
+  select(id, sex, ethnicity) %>% 
+  left_join(tail %>% select(id, riskgroup)) %>% 
+  mutate(riskgroup = case_when(riskgroup %in% c("BLOOD", "OTHER", "PERINAT", 
+                                                "UNKNOWN") ~ "OTHER", 
+                               TRUE ~ riskgroup)) %>% 
+  mutate(female = as.numeric(sex == 2),
+         ethnicity = factor(ethnicity, labels = c("Other", "White", 
+                                                  "Black", "Other", 
+                                                  "Other", "Unknown"))) %>% 
+  select(id, female, ethnicity, riskgroup)
+
+
+df_step9 <- df_step8 %>% 
+  mutate(age = year(trial_start) - born) %>% 
+  left_join(patchars, by = "id")
+
+
+
+
 
