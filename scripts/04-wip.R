@@ -6,7 +6,7 @@ library(data.table)
 library(tidyverse)
 library(bernr)
 library(lubridate)
-
+library(nephro)
 
 set.seed(12)
 
@@ -17,8 +17,10 @@ df <- pro_read("02-proposal_population.rds")
 tail <- pro_read("tail.rds")
 art <- pro_read("modif_art.rds")
 lab <- pro_read("lab.rds")
+lab2 <- pro_read("lab2.rds")
 brand_dose <- pro_read("brand_dose.rds")
 adhe <- pro_read("adhe.rds")
+pat <- pro_read("pat.rds")
 
 
 
@@ -319,4 +321,51 @@ df_step7 <- adhe_df[df_step6,
 
 
 
+# Add eGFR ----------------------------------------------------------------
+
+crea_df <- lab2 %>% 
+  filter(item == "CRE") %>% 
+  select(id, crea = value, cre_date = labdate) %>% 
+  drop_na() %>% 
+  left_join(pat %>% select(id, born, sex, ethnicity), by = "id") %>% 
+  mutate(male = as.numeric(sex == 1)) %>% 
+  mutate(egfr = CKDEpi.creat(creatinine = crea / 88.42,
+                             sex = male, 
+                             age = year(cre_date) - born, 
+                             ethnicity = ethnicity == 2)) %>% 
+  select(-(born:male))
+
+# Window for Creatinine
+df_step7 <- df_step7 %>% 
+  mutate(crea_hi = trial_start + 14, 
+         crea_lo = trial_start - 365.25)
+
+setDT(df_step7); setDT(crea_df)
+
+df_step8 <- crea_df[df_step7, 
+        on = .(id, cre_date >= crea_lo, cre_date <= crea_hi),
+        .(id, trial_start = i.trial_start, trial_nr = i.trial_nr, 
+          treatment = i.treatment, rna = i.rna, 
+          rna_date = i.rna_date, 
+          days_suppressed = i.days_suppressed, 
+          days_suppressed_actual = i.days_suppressed_actual, 
+          rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
+          carbam = i.carbam, carbam_drug = i.carbam, 
+          phenytoin = i.phenytoin, 
+          phenytoin_drug = i.phenytoin_drug, 
+          primidone = i.primidone, 
+          primidone_drug = i.primidone_drug, 
+          time_good_adh = i.time_good_adh, 
+          ad_date = i.ad_date, 
+          adherence = i.adherence,
+          adherence_locf = i.adherence_locf, 
+          time_good_adh_actual = i.time_good_adh_actual, 
+          crea = x.crea, 
+          egfr = x.egfr, 
+          cre_date = x.cre_date)] %>% 
+  as_tibble() %>% 
+  arrange(id, trial_nr, abs(trial_start - cre_date)) %>% 
+  group_by(id, trial_nr) %>% 
+  slice(1) %>% 
+  ungroup()
 
