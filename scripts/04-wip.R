@@ -452,14 +452,21 @@ df_step10 <- df_step9 %>%
 # Assess eligibility for each trial ---------------------------------------
 
 elig_data <- df_step10 %>% 
-  mutate(elig = if_else(elig_treatment == 1 & 
+  mutate(elig_current = if_else(elig_treatment == 1 & 
                           days_suppressed_actual >= 180 & 
                           egfr >= 30 & 
                           time_good_adh_actual >= 180 & 
                           ci_drug == FALSE, 
-                        1, 0))
+                        1, 0), 
+         elig_switch = if_else(switch_treatment == 1 & 
+                                 days_suppressed_actual >= 180 & 
+                                 egfr >= 30 & 
+                                 time_good_adh_actual >= 180 & 
+                                 ci_drug == FALSE,
+                               1, 0))
 
-
+elig_data %>% 
+  filter(elig_current == 1 |  elig_switch == 1)
 
 
 
