@@ -21,7 +21,7 @@ lab2 <- pro_read("lab2.rds")
 brand_dose <- pro_read("brand_dose.rds")
 adhe <- pro_read("adhe.rds")
 pat <- pro_read("pat.rds")
-
+fup <- pro_read("fup.rds")
 
 
 # Add contemporary treatments ---------------------------------------------
@@ -40,6 +40,38 @@ drop_backbone <- function(string) {
   string <- str_remove_all(string, "ABC|3TC|ETC|TAF|TDF|COB|RTV|AZT|DDI|D4T")
   str_squish(string)
 }
+
+
+# eligible patients -------------------------------------------------------
+
+# FUP after Jan 2013
+last_fupdate <- fup %>% 
+  select(id, fupdate) %>% 
+  arrange(id, desc(fupdate)) %>% 
+  group_by(id) %>% 
+  summarise(last_fup_date = first(fupdate))
+
+
+last_fup_sub <- last_fupdate %>% 
+  filter(last_fup_date >= dmy("01.01.2013"))
+
+
+# Ever had booster + 2 of NNRTI/INSTI/PI
+df <- last_fup_sub %>% 
+  left_join(art, by = "id") %>% 
+  select(id, last_fup_date, treatment, moddate, enddate) %>% 
+  mutate(booster = str_detect(treatment, booster),
+         insti = str_detect(treatment, insti),
+         nnrti = str_detect(treatment, nnrti), 
+         pi = str_detect(treatment, pi)) %>%
+  group_by(id) %>% 
+  filter(any(booster == TRUE & (insti + nnrti + pi) >1)) %>% 
+  ungroup() %>% 
+  distinct(id, last_fup_date)
+
+
+
+
 
 # Create Trials -----------------------------------------------------------
 
@@ -62,15 +94,15 @@ trial_grid <- trial_grid %>%
 
 # Add info on treatment ---------------------------------------------------
 
-df_art <- df %>% 
-  select(-moddate) %>% 
+df_sub <- df %>% 
+  # select(-moddate) %>% 
   left_join(art %>% select(-(num_art:precision)))
 
 
-# I first work on 1 patient, and extend that later on
-df_sub <- df_art %>% 
-  # filter(id == 12601) %>% 
-  select(id, treatment, moddate, enddate, switch) 
+# # I first work on 1 patient, and extend that later on
+# df_sub <- df_art %>% 
+#   # filter(id == 12601) %>% 
+#   select(id, treatment, moddate, enddate) 
 
 # Since the last treatment is ongoin, I create a fictive "enddate in future"
 df_sub <- df_sub %>% 
@@ -475,11 +507,18 @@ elig_data <- df_step10 %>%
 
 elig_data %>% 
   filter(elig_switch == 1) %>% 
-  distinct_ids()
+  count(treatment, sort = TRUE)
 
 elig_data %>% 
-  filter(elig_current == 1)
+  filter(elig_current == 1) %>% 
+  distinct_ids()
 
+
+elig_data %>% 
+  filter(elig_current == 1) %>% 
+  mutate(treatment_lumped = fct_lump(treatment, n = 30)) %>% 
+  count(treatment_lumped, sort = T) %>% 
+  print(n = 300)
 
 
 # Write Data --------------------------------------------------------------
