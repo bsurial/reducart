@@ -54,7 +54,9 @@ trial_grid <- tibble(trial_start = seq(ymd('2013-06-01'),
 
 # Add id to grid
 trial_grid <- trial_grid %>% 
-  mutate(id = 12601)
+  crossing(id = df$id) %>% 
+  arrange(id, trial_nr)
+
 
 
 
@@ -67,7 +69,7 @@ df_art <- df %>%
 
 # I first work on 1 patient, and extend that later on
 df_sub <- df_art %>% 
-  filter(id == 12601) %>% 
+  # filter(id == 12601) %>% 
   select(id, treatment, moddate, enddate, switch) 
 
 # Since the last treatment is ongoin, I create a fictive "enddate in future"
@@ -98,8 +100,7 @@ rna <- lab %>%
   drop_na()
 
 
-rna_sub <- rna %>% 
-  filter(id == 12601) 
+rna_sub <- rna 
 
 
 
@@ -290,7 +291,7 @@ adhe_df <- adhe %>%
 
 # Calculate Time with adherence once every 2 weeks or better
 adhe_df <- adhe_df %>% 
-  filter(id == 12601) %>% 
+  # filter(id == 12601) %>% 
   mutate(good_adh = missed_locf %in% 
            c("once a month", "never", "once every 2 weeks")) %>% 
   group_by(id) %>% 
@@ -455,18 +456,32 @@ elig_data <- df_step10 %>%
   mutate(elig_current = if_else(elig_treatment == 1 & 
                           days_suppressed_actual >= 180 & 
                           egfr >= 30 & 
-                          time_good_adh_actual >= 180 & 
+                          time_good_adh_actual >= 180 &
                           ci_drug == FALSE, 
                         1, 0), 
          elig_switch = if_else(switch_treatment == 1 & 
                                  days_suppressed_actual >= 180 & 
                                  egfr >= 30 & 
-                                 time_good_adh_actual >= 180 & 
+                                 time_good_adh_actual >= 180 &
                                  ci_drug == FALSE,
                                1, 0))
 
+
+
+
+
+# summary -----------------------------------------------------------------
+
+
 elig_data %>% 
-  filter(elig_current == 1 |  elig_switch == 1)
+  filter(elig_switch == 1) %>% 
+  distinct_ids()
+
+elig_data %>% 
+  filter(elig_current == 1)
 
 
 
+# Write Data --------------------------------------------------------------
+
+write_rds(elig_data, here::here("processed", "04-nested_trial_data.rds"))
