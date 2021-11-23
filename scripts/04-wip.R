@@ -771,8 +771,15 @@ studypop_filtered <- elig_data %>%
 gtsave(as_gt(t_2), here::here("tables", "04-patient_characteristics_alltrials.png"))
 
 
-
-
+# Number of trials eligible per patient
+elig_data %>% 
+  filter(elig_current == 1) %>% 
+  group_by(id) %>% 
+  count() %>% 
+  ungroup() %>% 
+  summarise(median = median(n), 
+            p25 = quantile(n, 0.25),
+            p75 = quantile(n, 0.75))
 
 
 
