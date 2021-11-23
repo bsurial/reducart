@@ -502,6 +502,156 @@ elig_data <- df_step10 %>%
 
 
 
+
+# Add history of VF and NRTI Mono ---------------------------------------------
+
+### NEED TO INCLUDE IT UPSTREAM
+
+
+## NRTI Mono one or two NRTIs, not 3
+nrti_mono <- art %>% 
+  group_by(id) %>% 
+  mutate(no_third = (num_nnrti + num_pi + num_ntrti + 
+                       num_fi + num_others + num_inti) == 0) %>% 
+  mutate(nrti_mono = num_nrti <= 2 & 
+           no_third & 
+           !is.na(treatment)) %>% 
+  select(id, treatment, moddate, enddate, no_third, nrti_mono) %>% 
+  ungroup()
+
+
+elig_data <- elig_data %>% 
+  select(id, trial_start) %>% 
+  left_join(nrti_mono, by = "id") %>% 
+  group_by(id, trial_start) %>% 
+  # Any use of NRTI_mono prior to trial start
+  summarise(nrti_mono = any(nrti_mono & moddate < trial_start)) %>% 
+  ungroup() %>% 
+  right_join(elig_data, by = c("id", "trial_start")) %>% 
+  to_last(nrti_mono)
+  
+  
+
+# Add Virological failure:
+# RNA > 200 after 180 days of ART or 2 x >200 after previously suppressed
+
+
+on_treatment <- art %>% 
+  select(-(num_art:precision)) %>% 
+  group_by(id) %>% 
+  mutate(on_art = as.numeric(!is.na(treatment))) %>% 
+  mutate(p = cumsum(on_art != lag(on_art, default = 2))) %>% 
+  group_by(id, p) %>% 
+  summarise(start = first(moddate), 
+            stop = last(enddate), 
+            on_art = max(on_art),
+            .groups = "drop") %>% 
+  mutate(stop = if_else(is.na(stop), dmy("01.01.2100"), stop))
+
+
+setDT(rna);setDT(on_treatment)
+rna_art <- on_treatment[rna, 
+                        on = .(id, start <= labdate, stop > labdate), 
+                        .(id, rna = i.rna, 
+                          rna_date = i.labdate, 
+                          art_period = x.p, 
+                          on_art = x.on_art, 
+                          period_start = x.start, 
+                          period_stop = x.stop)] %>% 
+  as_tibble() %>% 
+  mutate(days_on_art = if_else(on_art == 1, 
+                               as.numeric(rna_date - period_start), 
+                               0))
+
+
+
+
+# Adherence data
+ad_table <- adhe %>% 
+  arrange(id, ad_date) %>% 
+  select(-(amenddate:inputdate)) %>% 
+  group_by(id) %>% 
+  mutate(end_period = lead(ad_date)) %>% 
+  ungroup() %>% 
+  mutate(ad_date_windowed = ad_date - 21, 
+         end_period_windowed = end_period - 21) %>% 
+  mutate(end_period = replace_na(end_period, dmy("01.01.2100"))) 
+
+
+setDT(rna_art);setDT(ad_table)
+
+rna_detailed_long <- ad_table[rna_art, 
+                              on = .(id, ad_date_windowed <= rna_date, 
+                                     end_period_windowed > rna_date), 
+                              .(id, 
+                                rna = i.rna, 
+                                rna_date = i.rna_date, 
+                                art_period = i.art_period, 
+                                on_art = i.on_art, 
+                                period_start = i.period_start, 
+                                period_stop = i.period_stop, 
+                                missed = x.missed, 
+                                in_row = x.in_row, 
+                                ad_date = x.ad_date)] %>% 
+  as_tibble() %>% 
+  mutate(missed = if_else(missed == "Z", NA_character_, missed),
+         missed = factor(missed, 
+                         labels = c("every day", 
+                                    "more than 1/week",
+                                    "once a week", 
+                                    "once every 2 weeks", 
+                                    "once a month", 
+                                    "never")))
+
+
+
+# rna_detailed_long %>% 
+#   group_by(id) %>% 
+#   mutate(flag = if_else(rna > 200 & lag(rna) > 200 & on_art == 1, 
+#                         "X", "")) %>% 
+#   group_by(id, art_period) %>% 
+#   mutate(t = as.numeric(rna_date - first(period_start)), 
+#          failure = if_else(flag == "X" & 
+#                              t >= 180, "Y", "N")) %>% 
+#   filter(id == 10045) %>% 
+#   print(n = 100)
+
+# any_failure <- failure_long %>% 
+#   group_by(id) %>% 
+#   summarise(any_failure = any(failure == "Y")) %>% 
+#   mutate(any_failure = replace_na(any_failure, FALSE))
+# 
+# 
+# # rna_detailed_long[rna_detailed_long$id == 10045, "rna"][50:55,] <- 300
+failure_df <- rna_detailed_long %>% 
+  group_by(id, art_period) %>% 
+  mutate(days_on_art = if_else(on_art == 1, 
+                               as.numeric(rna_date - first(period_start)), 
+                               0)) %>% 
+  # add art_period so if we start a new ART, previoulsy suppressed resets to 0
+  group_by(id, art_period) %>% 
+  mutate(time_lapsed = as.numeric(rna_date - lag(rna_date))) %>% 
+  mutate(previously_suppressed = cummax(rna < 200)) %>% 
+  mutate(failure = case_when(
+    rna >= 200 & days_on_art > 180  & previously_suppressed == 0 ~ 1, 
+    rna >= 200 & lag(rna) >= 200 & 
+      time_lapsed >= 14 & previously_suppressed == 1 ~ 1, 
+    TRUE ~ 0
+  )) 
+
+
+elig_data <- elig_data %>% 
+  select(id, trial_start) %>% 
+  left_join(failure_df, by = "id") %>% 
+  group_by(id, trial_start) %>% 
+  summarise(history_VF = any(failure == 1 & rna_date < trial_start)) %>% 
+  ungroup() %>% 
+  right_join(elig_data, by = c("id", "trial_start")) %>% 
+  to_last(history_VF)
+
+
+
+
 # summary -----------------------------------------------------------------
 
 
@@ -524,3 +674,9 @@ elig_data %>%
 # Write Data --------------------------------------------------------------
 
 write_rds(elig_data, here::here("processed", "04-nested_trial_data.rds"))
+
+
+
+
+
+
