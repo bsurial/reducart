@@ -2,6 +2,7 @@ library(tidyverse)
 library(bernr)
 library(gtsummary)
 library(gt)
+library(here)
 
 # Themes ------------------------------------------------------------------
 
@@ -117,3 +118,11 @@ studypop %>%
   summarise(median = median(n), 
             p25 = quantile(n, 0.25),
             p75 = quantile(n, 0.75))
+
+
+
+# Write id list for Roger
+studypop %>% 
+  distinct(id) %>% 
+  write_csv(here("processed", "05-ids_for_resistance.csv"))
+
