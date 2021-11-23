@@ -651,6 +651,24 @@ elig_data <- elig_data %>%
 
 
 
+# Add covariates ----------------------------------------------------------
+
+max_rna <- lab %>% 
+  select(id, rna, labdate) %>% 
+  drop_na() %>% 
+  group_by(id) %>% 
+  summarise(max_rna = max(rna))
+
+nadir_cd4 <- lab %>% 
+  select(id, cd4, cd4date) %>% 
+  drop_na() %>% 
+  group_by(id) %>% 
+  summarise(nadir_cd4 = min(cd4))
+
+
+elig_data <- elig_data %>% 
+  left_join(max_rna, by = "id") %>% 
+  left_join(nadir_cd4, by = "id")
 
 # summary -----------------------------------------------------------------
 
