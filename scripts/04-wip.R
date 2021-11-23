@@ -7,6 +7,8 @@ library(tidyverse)
 library(bernr)
 library(lubridate)
 library(nephro)
+library(gtsummary)
+library(gt)
 
 set.seed(12)
 
@@ -40,6 +42,18 @@ drop_backbone <- function(string) {
   string <- str_remove_all(string, "ABC|3TC|ETC|TAF|TDF|COB|RTV|AZT|DDI|D4T")
   str_squish(string)
 }
+
+
+# THEMES
+# Set GT Summary Theme
+my_theme <-
+  list(
+    "tbl_summary-str:default_con_type" = "continuous",
+    "tbl_summary-str:continuous_stat" = "{median} ({p25} to {p75})",
+    "style_number-arg:big.mark" = "",
+    "tbl_summary-arg:missing_text" = "(Missing)"
+  )
+set_gtsummary_theme(my_theme)
 
 
 # eligible patients -------------------------------------------------------
@@ -665,14 +679,16 @@ nadir_cd4 <- lab %>%
   group_by(id) %>% 
   summarise(nadir_cd4 = min(cd4))
 
-
+elig_data %>% select(-max_rna, -nadir_cd4) -> elig_data
 elig_data <- elig_data %>% 
   left_join(max_rna, by = "id") %>% 
-  left_join(nadir_cd4, by = "id")
+  left_join(nadir_cd4, by = "id") %>% 
+  mutate(max_rna_log = log(max_rna))
 
-# summary -----------------------------------------------------------------
+# Summary -----------------------------------------------------------------
 
 
+# Unique Patients
 elig_data %>% 
   filter(elig_switch == 1) %>% 
   count(treatment, sort = TRUE)
@@ -687,6 +703,78 @@ elig_data %>%
   mutate(treatment_lumped = fct_lump(treatment, n = 30)) %>% 
   count(treatment_lumped, sort = T) %>% 
   print(n = 300)
+
+
+switchers_1 <- elig_data %>% 
+  filter(elig_switch == 1) %>% 
+  distinct(id, female, ethnicity, riskgroup, max_rna_log, nadir_cd4) %>% 
+  mutate(group = "switched")
+
+current_1 <- elig_data %>% 
+  filter(elig_current == 1) %>% 
+  distinct(id, female, ethnicity, riskgroup, max_rna_log, nadir_cd4) %>% 
+  mutate(group = "current")
+
+
+all_1 <- bind_rows(switchers_1, current_1)
+
+
+(t_1 <- all_1 %>% 
+    select(-id) %>% 
+    labelled::set_variable_labels(
+      female = "Female sex",
+      ethnicity = "Ethnicity",
+      riskgroup = "HIV transmission group",
+      max_rna_log = "Pretreatment HIV viral load, log cp/mL (IQR)",
+      nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)"
+    ) %>% 
+    tbl_summary(by = group, 
+                missing = "no",
+                digits = list(all_continuous() ~ 1, 
+                              nadir_cd4 ~ 0)) %>% 
+    bold_labels())
+
+gtsave(as_gt(t_1), here::here("tables", "04-patient_characteristics.png"))
+
+
+
+# Trials
+
+studypop_filtered <- elig_data %>% 
+  filter(elig_current == 1 | elig_switch == 1) %>% 
+  mutate(group = if_else(elig_current == 1, "current", 
+                         if_else(elig_switch == 1, "switch", NA_character_)))
+
+
+(t_2 <- studypop_filtered %>%
+    mutate(t_suppressed_actual = days_suppressed_actual / 365.25, 
+           t_good_adh = time_good_adh_actual / 365.25) %>% 
+    select(group, female, ethnicity, age, riskgroup, max_rna_log, 
+           nadir_cd4, t_suppressed_actual, t_good_adh, 
+           egfr, ci_drug, history_VF, nrti_mono) %>% 
+    labelled::set_variable_labels(
+      female = "Female sex",
+      ethnicity = "Ethnicity",
+      age = "Age at trial start, years (IQR)",
+      riskgroup = "HIV transmission group",
+      max_rna_log = "Pretreatment HIV viral load, log cp/mL (IQR)",
+      nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)",
+      t_suppressed_actual = "Time with HIV <50 cp/mL, years (IQR)",
+      t_good_adh = "Time with good adherence, years (IQR)",
+      egfr = "eGFR at trial start, ml/min (IQR)",
+      ci_drug = "Receipt of contra-indicated drug",
+      history_VF = "History of virological failure", 
+      nrti_mono = "History of single/dual NRTI therapy"
+    ) %>%
+    tbl_summary(by = group))
+
+gtsave(as_gt(t_2), here::here("tables", "04-patient_characteristics_alltrials.png"))
+
+
+
+
+
+
 
 
 # Write Data --------------------------------------------------------------
