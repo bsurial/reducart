@@ -165,7 +165,8 @@ time_supp_df <- rna_sub %>%
     suppressed == TRUE & lag(suppressed) == FALSE ~ labdate - labdate,
     suppressed == TRUE & lag(suppressed) == TRUE ~ labdate - lag(labdate)),
     time_suppressed = as.numeric(time_suppressed)) %>% 
-  group_by(id, grp = cumsum(time_suppressed == 0)) %>% 
+  mutate(grp = cumsum(time_suppressed == 0)) %>% 
+  group_by(id, grp) %>% 
   mutate(time_suppressed = cumsum(time_suppressed)) %>% 
   ungroup() %>% 
   select(-grp) 
@@ -347,7 +348,8 @@ adhe_df <- adhe_df %>%
     good_adh == TRUE & row_number() == 1 ~ ad_date - ad_date,
     good_adh = TRUE & lag(good_adh) == TRUE ~ ad_date - lag(ad_date)),
     time_good_adh = as.numeric(time_good_adh)) %>% 
-  group_by(id, grp = cumsum(time_good_adh == 0)) %>% 
+  mutate(grp = cumsum(time_good_adh == 0)) %>% 
+  group_by(id, grp) %>% 
   mutate(time_good_adh = cumsum(time_good_adh)) %>% 
   ungroup()
 
