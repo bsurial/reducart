@@ -685,6 +685,46 @@ elig_data <- elig_data %>%
   left_join(nadir_cd4, by = "id") %>% 
   mutate(max_rna_log = log(max_rna))
 
+
+# Add n_conmeds -----------------------------------------------------------
+
+drug_small <- brand_dose %>% 
+  select(id, brand, var_desc, startdate, stopdate) %>% 
+  mutate(stopdate = if_else(is.na(stopdate), dmy("01.01.2100"), 
+                            stopdate))
+
+# Exclude HIV drugs and vaccines from drug_small vvv
+HIV_drugs <- c("J05AR", "J05AE", "J05AX", "J05AG",
+               "J05AF", "J05AJ", "_trialproduct_J05A_", 
+               "J07")
+HIV_drugs_pattern <- paste0(HIV_drugs, collapse = "|")
+drug_nohiv <- drug_small %>% 
+  filter(!str_detect(brand, HIV_drugs_pattern))
+
+# Join them vvv
+elig_small <- elig_data %>% 
+  select(id, trial_start)
+
+setDT(drug_nohiv); setDT(elig_small)
+
+conmeds <- drug_nohiv[elig_small, 
+                      on = .(id, startdate <= trial_start, 
+                             stopdate >= trial_start), 
+                      .(id, 
+                        trial_start = i.trial_start,
+                        brand = x.brand)] %>% 
+  as_tibble() %>% 
+  distinct(id, trial_start, brand) %>% # remove duplicates per trial
+  group_by(id, trial_start) %>% 
+  summarise(n_conmeds = sum(!is.na(brand))) %>% 
+  arrange(desc(n_conmeds))
+
+
+elig_data <- elig_data %>% 
+  left_join(conmeds, by = c("id", "trial_start"))
+
+
+
 # Summary -----------------------------------------------------------------
 
 
@@ -780,6 +820,7 @@ elig_data %>%
   summarise(median = median(n), 
             p25 = quantile(n, 0.25),
             p75 = quantile(n, 0.75))
+
 
 
 
