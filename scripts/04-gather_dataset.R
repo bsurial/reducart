@@ -790,8 +790,8 @@ studypop_filtered <- elig_data %>%
     mutate(t_suppressed_actual = days_suppressed_actual / 365.25, 
            t_good_adh = time_good_adh_actual / 365.25) %>% 
     select(group, female, ethnicity, age, riskgroup, max_rna_log, 
-           nadir_cd4, t_suppressed_actual, t_good_adh, 
-           egfr, ci_drug, history_VF, nrti_mono) %>% 
+           nadir_cd4, t_suppressed_actual, t_good_adh, adherence_locf, 
+           egfr, ci_drug, history_VF, nrti_mono, n_conmeds) %>% 
     labelled::set_variable_labels(
       female = "Female sex",
       ethnicity = "Ethnicity",
@@ -801,12 +801,15 @@ studypop_filtered <- elig_data %>%
       nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)",
       t_suppressed_actual = "Time with HIV <50 cp/mL, years (IQR)",
       t_good_adh = "Time with good adherence, years (IQR)",
+      adherence_locf = "Missed dose in the last 4 weeks",
       egfr = "eGFR at trial start, ml/min (IQR)",
       ci_drug = "Receipt of contra-indicated drug",
       history_VF = "History of virological failure", 
-      nrti_mono = "History of single/dual NRTI therapy"
+      nrti_mono = "History of single/dual NRTI therapy",
+      n_conmeds = "Nr. of non-HIV drugs"
     ) %>%
-    tbl_summary(by = group))
+    tbl_summary(by = group) %>% 
+    bold_labels())
 
 gtsave(as_gt(t_2), here::here("tables", "04-patient_characteristics_alltrials.png"))
 
