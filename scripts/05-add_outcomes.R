@@ -77,11 +77,21 @@ failures <- rna_art %>%
 
 failure_1 <- failures %>% 
   filter(failure == TRUE) %>% 
-  select(id, failure_1_date = labdate)
+  select(id, failure_1_date = labdate) %>% 
+  # Only take the first failure
+  arrange(id, failure_1_date) %>% 
+  group_by(id) %>% 
+  summarise(failure_1_date = first(failure_1_date)) %>% 
+  ungroup()
 
 failure_2 <- failures %>% 
   filter(failure2 == TRUE) %>% 
-  select(id, failure_2_date = labdate)
+  select(id, failure_2_date = labdate) %>% 
+  # Only take the first failure
+  arrange(id, failure_2_date) %>% 
+  group_by(id) %>% 
+  summarise(failure_2_date = first(failure_2_date)) %>% 
+  ungroup()
 
 
 
@@ -91,29 +101,31 @@ df_death_fup_failure <- df_death_fup %>%
   left_join(failure_2, by = "id")
 
 
-# add reg_date ------------------------------------------------------------
-df_death_fup_failure %>% 
-  filter(!is.na(loss_to_fup_date) & !is.na(failure_1_date)) %>% 
-  print(n = 200)
 
-df_death_fup_failure %>% 
+# add Events and Censoring -----------------------------------------------------
+
+event_data <- df_death_fup_failure %>% 
+  # Add regdate 
   left_join(pat %>% select(id, regdate)) %>% 
-  filter(id == 14333) %>% 
-  print(n = 100) %>% 
-  mutate(event_type = if_else(!is.na(failure_1_date) & 
-                           failure_1_date > trial_start, 
-                         "failure 1", 
-                         "no failure"),
-         censor_reason = case_when(
-           loss_to_fup_date > trial_start & 
-             !is.na(loss_to_fup_date) ~ "loss to fup", 
-           death_date > trial_start & !is.na(death_date) ~ "death", 
-         TRUE ~ "none")) %>% 
-  mutate(event = if_else(event_type == "failure 1", 1, 0), 
+  # failure 1 before failure 2
+  mutate(event_type = case_when(
+    !is.na(failure_1_date) & failure_1_date > trial_start ~ "failure 1",
+    !is.na(failure_2_date) & failure_2_date > trial_start ~ "failure 2",
+    TRUE ~ "no failure")) %>%  
+  # loss_to_fup before death (some are loss to fup and found later to be dead)
+  mutate(censor_reason = case_when(
+    loss_to_fup_date > trial_start & !is.na(loss_to_fup_date) ~ "loss to fup", 
+    death_date > trial_start & !is.na(death_date) ~ "death", 
+    TRUE ~ "none")) %>% 
+  # code event as 1 = failure 1, 2 = failure 2 and add censor dates
+  mutate(event = if_else(event_type == "failure 1", 1, 
+                         if_else(event_type == "failure 2", 2, 0)), 
          censor = if_else(censor_reason %in% c("death", "loss to fup"), 
                           1, 0),
          event_date = if_else(event_type == "failure 1", failure_1_date, NA_Date_), 
          censor_date =  case_when(
            censor_reason == "loss to fup" ~ loss_to_fup_date,
-           censor_reason == "death" ~ death_date)) 
-  # There are more than 1 event per person, only take the first
+           censor_reason == "death" ~ death_date)) %>% 
+  # Clean up
+  select(id, trial_start, trial_nr, regdate, event, event_date, event_type, 
+         censor, censor_date, censor_reason)
