@@ -12,6 +12,9 @@ stop <- pro_read("stop.rds")
 lab <- pro_read("lab.rds")
 art <- pro_read("modif_art.rds")
 pat <- pro_read("pat.rds")
+fup <- pro_read("fup.rds")
+
+
 
 
 # Add death and loss-to-fup -----------------------------------------------
@@ -129,3 +132,41 @@ event_data <- df_death_fup_failure %>%
   # Clean up
   select(id, trial_start, trial_nr, regdate, event, event_date, event_type, 
          censor, censor_date, censor_reason)
+
+
+
+# add last follow-up ------------------------------------------------------
+
+last_fup <- fup %>% 
+  select(id, fupdate) %>% 
+  group_by(id) %>% 
+  summarise(last_fupdate = last(fupdate, order_by = fupdate)) %>% 
+  ungroup()
+
+
+event_data <- event_data %>% 
+  left_join(last_fup, by = "id")
+
+
+
+# Add time variable -------------------------------------------------------
+
+# Earliest of event, censor or last_fup date
+event_data <- event_data %>% 
+  rowwise() %>% 
+  mutate(time = min(event_date, censor_date, last_fupdate, na.rm = TRUE)) %>% 
+  ungroup()
+
+
+# Full data
+full_df <- elig_data %>% 
+  left_join(event_data, by = c("id", "trial_start", "trial_nr"))
+
+
+
+aset <- full_df %>% 
+  filter(elig_current == 1 | elig_switch == 1)
+
+
+
+
