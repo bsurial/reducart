@@ -1,12 +1,12 @@
+
+# Load packages -----------------------------------------------------------
+
 library(data.table)
 library(tidyverse)
 library(here)
 library(bernr)
 library(lubridate)
-library(survminer)
-library(survival)
-library(ipw)
-library(boot)
+
 
 # Load data ---------------------------------------------------------------
 
@@ -157,7 +157,7 @@ event_data <- event_data %>%
 # Earliest of event, censor or last_fup date
 event_data <- event_data %>% 
   rowwise() %>% 
-  mutate(time = min(event_date, censor_date, last_fupdate, na.rm = TRUE)) %>% 
+  mutate(time_date = min(event_date, censor_date, last_fupdate, na.rm = TRUE)) %>% 
   ungroup()
 
 
@@ -166,77 +166,22 @@ full_df <- elig_data %>%
   left_join(event_data, by = c("id", "trial_start", "trial_nr"))
 
 
-
 aset <- full_df %>% 
+  # Filter only those who are eligilbe and where trial starts before time
   filter(elig_current == 1 | elig_switch == 1) %>% 
-  filter(trial_start < time)
+  filter(trial_start < time_date)
 
 
-
+# Add outcome variables
 aset <- aset %>% 
-  mutate(time2 = as.numeric((time - trial_start) / 365.25)) %>% 
+  mutate(time = as.numeric((time_date - trial_start) / 365.25)) %>% 
   mutate(event_dicho = as.numeric(event %in% c(1, 2))) %>% 
   mutate(group = if_else(elig_switch == 1, "Switch", "Current"), 
          group_numeric = as.numeric(group == "Switch"))
 
 
-ggsurvplot(fit = survfit(Surv(time2, event_dicho) ~ group, data = aset))
 
+write_rds(aset, here("processed", "05-analysis_data.rds"))
 
-
-
-
-
-# Calculate weights using the ipw package
-weights <- ipwpoint(exposure = group_numeric, 
-                    family = "binomial", 
-                    link = "logit", 
-                    denominator = ~adherence_locf + history_VF + n_conmeds + age + female + ethnicity + riskgroup, 
-                    data = as.data.frame(aset))
-
-aset$weights <- weights$ipw.weights
-trims <- aset$weights %>% quantile(probs = c(0.01, 0.99))
-
-aset <- aset %>% 
-  mutate(weights = if_else(weights <= trims[1], trims[1], weights), 
-         weights = if_else(weights >= trims[2], trims[2], weights))
-
-
-m <- coxph(Surv(time2, event_dicho) ~ group, data = aset, weights = aset$weights)
-
-broom::tidy(m, exp = TRUE)$estimate
-
-boot_function <- function(data, indices) {
-  d <- data[indices, ]
-  weights <- ipwpoint(exposure = group_numeric, 
-                      family = "binomial", 
-                      link = "logit", 
-                      denominator = ~adherence_locf + history_VF + n_conmeds + 
-                        adherence_locf + history_VF + n_conmeds + age + female + ethnicity + riskgroup, 
-                      data = as.data.frame(d))
-  trims <- weights$ipw.weights %>% quantile(probs = c(0.01, 0.99))
-  
-  d$weights <- weights$ipw.weights
-  
-  d <- d %>% 
-    mutate(weights = if_else(weights <= trims[1], trims[1], weights), 
-           weights = if_else(weights >= trims[2], trims[2], weights))
-  
-  
-  obj <- coxph(Surv(time2, event_dicho) ~ group, data = d, 
-               weights = d$weights)
-  broom::tidy(obj)$estimate
-} 
-
-
-# # BOOT starts here
-# b <- boot(aset, boot_function, R = 500, parallel = "multicore", ncpus = 12)
-# 
-# tibble("HR" = b$t0,
-#   "LCI" = quantile(b$t, 0.025)[[1]],
-#   "UCI" = quantile(b$t, 0.975)[[1]]) %>%
-#   mutate_all(exp) %>%
-#   print() %>%
-#   ggplot() +
-#   geom_pointrange(aes(y = 1, x = HR, xmin = LCI, xmax = UCI))
+####
 
