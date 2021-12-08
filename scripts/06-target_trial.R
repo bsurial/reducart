@@ -161,6 +161,7 @@ set.seed(1)
 # b <- boot(df_analysis, boot_function, R = 500, parallel = "multicore", ncpus = 12)
 # write_rds(b, here("processed", "06-vf_model_bootstraps.rds"))
 
+
 b <- pro_read("06-vf_model_bootstraps.rds")
 
 tibble("HR" = b$t0,
