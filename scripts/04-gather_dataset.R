@@ -161,6 +161,7 @@ time_supp_df <- rna_sub %>%
   mutate(suppressed = rna < 50 | blip == TRUE) %>% 
   group_by(id) %>% 
   mutate(time_suppressed = case_when(
+    labdate == first(labdate) ~ labdate - labdate,
     suppressed == FALSE ~ labdate - labdate, 
     suppressed == TRUE & lag(suppressed) == FALSE ~ labdate - labdate,
     suppressed == TRUE & lag(suppressed) == TRUE ~ labdate - lag(labdate)),
