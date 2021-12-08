@@ -346,7 +346,7 @@ adhe_df <- adhe_df %>%
   mutate(time_good_adh = case_when(
     good_adh == FALSE ~ ad_date - ad_date, 
     good_adh == TRUE & lag(good_adh) == FALSE ~ ad_date -  ad_date,
-    good_adh == TRUE & row_number() == 1 ~ ad_date - ad_date,
+    row_number() == 1 ~ ad_date - ad_date,
     good_adh = TRUE & lag(good_adh) == TRUE ~ ad_date - lag(ad_date)),
     time_good_adh = as.numeric(time_good_adh)) %>% 
   mutate(grp = cumsum(time_good_adh == 0)) %>% 
