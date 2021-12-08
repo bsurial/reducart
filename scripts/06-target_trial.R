@@ -112,11 +112,11 @@ weights <- ipwpoint(exposure = group_numeric,
                     link = "logit", 
                     numerator = ~1, # Stabilized weights
                     denominator = ~adherence_locf + history_VF + n_conmeds, 
-                    data = as.data.frame(aset))
+                    data = as.data.frame(df_analysis))
 
 summary(weights$ipw.weights)
 
-aset$weights <- weights$ipw.weights
+df_analysis$weights <- weights$ipw.weights
 
 
 
@@ -125,7 +125,8 @@ aset$weights <- weights$ipw.weights
 
 # Fit weighted model ------------------------------------------------------
 
-m <- coxph(Surv(time, event_dicho) ~ group, data = aset, weights = aset$weights)
+m <- coxph(Surv(time, event_dicho) ~ group, data = df_analysis, 
+           weights = df_analysis$weights)
 
 broom::tidy(m, exp = TRUE)
 
@@ -149,9 +150,9 @@ boot_function <- function(data, indices) {
 
 
 # BOOT starts here
-# set.seed(1)
-# b <- boot(aset, boot_function, R = 500, parallel = "multicore", ncpus = 12)
-# write_rds(b, here("processed", "06-vf_model_bootstraps.rds"))
+set.seed(1)
+b <- boot(df_analysis, boot_function, R = 500, parallel = "multicore", ncpus = 12)
+write_rds(b, here("processed", "06-vf_model_bootstraps.rds"))
 
 b <- pro_read("06-vf_model_bootstraps.rds")
 
