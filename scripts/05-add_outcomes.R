@@ -79,7 +79,9 @@ rna_art <- art_select[rna_filtered,
 failures <- rna_art %>% 
   group_by(id) %>% 
   mutate(failure = (rna > 200 & lag(rna) > 200), 
-         failure2 = (rna > 200 & lag(treatment) != treatment))
+         failure2 = (rna > 200 & lag(treatment) != treatment), 
+         failure3 = rna > 200, 
+         blip = rna > 50)
 
 failure_1 <- failures %>% 
   filter(failure == TRUE) %>% 
@@ -99,12 +101,22 @@ failure_2 <- failures %>%
   summarise(failure_2_date = first(failure_2_date)) %>% 
   ungroup()
 
+failure_3 <- failures %>% 
+  filter(failure3 == TRUE) %>% 
+  select(id, failure_3_date = labdate) %>% 
+  # Only take the first failure
+  arrange(id, failure_3_date) %>% 
+  group_by(id) %>% 
+  summarise(failure_3_date = first(failure_3_date)) %>% 
+  ungroup()
+
 
 
 
 df_death_fup_failure <- df_death_fup %>% 
   left_join(failure_1, by = "id") %>% 
-  left_join(failure_2, by = "id")
+  left_join(failure_2, by = "id") %>% 
+  left_join(failure_3, by = "id")
 
 
 
@@ -117,6 +129,7 @@ event_data <- df_death_fup_failure %>%
   mutate(event_type = case_when(
     !is.na(failure_1_date) & failure_1_date > trial_start ~ "failure 1",
     !is.na(failure_2_date) & failure_2_date > trial_start ~ "failure 2",
+    !is.na(failure_3_date) & failure_3_date > trial_start ~ "failure 3",
     TRUE ~ "no failure")) %>%  
   # loss_to_fup before death (some are loss to fup and found later to be dead)
   mutate(censor_reason = case_when(
@@ -125,18 +138,22 @@ event_data <- df_death_fup_failure %>%
     TRUE ~ "none")) %>% 
   # code event as 1 = failure 1, 2 = failure 2 and add censor dates
   mutate(event = if_else(event_type == "failure 1", 1, 
-                         if_else(event_type == "failure 2", 2, 0)), 
+                         if_else(event_type == "failure 2", 2, 
+                                 if_else(event_type == "failure 3", 3, 0))), 
          censor = if_else(censor_reason %in% c("death", "loss to fup"), 
                           1, 0),
-         event_date = if_else(event_type == "failure 1", failure_1_date, NA_Date_), 
+         event_date = if_else(event_type == "failure 1", failure_1_date, 
+                              if_else(event_type == "failure 2", failure_2_date, NA_Date_)),
+         event3_date = if_else(event_type == "failure 3", failure_3_date, NA_Date_),
          censor_date =  case_when(
            censor_reason == "loss to fup" ~ loss_to_fup_date,
            censor_reason == "death" ~ death_date)) %>% 
   # Clean up
-  select(id, trial_start, trial_nr, regdate, event, event_date, event_type, 
+  select(id, trial_start, trial_nr, regdate, event, event_date, event3_date, event_type, 
          censor, censor_date, censor_reason)
 
-
+event_data %>% 
+  filter(event_type == "failure 3")
 
 # add last follow-up ------------------------------------------------------
 
@@ -157,7 +174,9 @@ event_data <- event_data %>%
 # Earliest of event, censor or last_fup date
 event_data <- event_data %>% 
   rowwise() %>% 
-  mutate(time_date = min(event_date, censor_date, last_fupdate, na.rm = TRUE)) %>% 
+  mutate(time_date = min(event_date, censor_date, last_fupdate, na.rm = TRUE), 
+         time3_date = min(event_date, event3_date, censor_date, last_fupdate, 
+                          na.rm = TRUE)) %>% 
   ungroup()
 
 
@@ -174,8 +193,10 @@ aset <- full_df %>%
 
 # Add outcome variables
 aset <- aset %>% 
-  mutate(time = as.numeric((time_date - trial_start) / 365.25)) %>% 
-  mutate(event_dicho = as.numeric(event %in% c(1, 2))) %>% 
+  mutate(time = as.numeric((time_date - trial_start) / 365.25), 
+         time_3 = as.numeric((time3_date - trial_start) / 365.25)) %>% 
+  mutate(event_dicho = as.numeric(event %in% c(1, 2)), 
+         event_3 = as.numeric(event %in% c(1, 2, 3))) %>% 
   mutate(group = if_else(elig_switch == 1, "Switch", "Current"), 
          group_numeric = as.numeric(group == "Switch"))
 
@@ -184,4 +205,6 @@ aset <- aset %>%
 write_rds(aset, here("processed", "05-analysis_data.rds"))
 
 ####
+
+
 
