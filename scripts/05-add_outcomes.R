@@ -74,7 +74,8 @@ rna_art <- art_select[rna_filtered,
 
 # Time to confirmed virological failure, defined as 
 # 2 consecutive HIV viral loads > 200 copies/mL (FAILURE 1) or 
-# 1 viral load > 200 copies/mL followed by a treatment change (FAILURE 2)
+# 1 viral load > 200 copies/mL followed by a treatment change (FAILURE 2) or
+# any HIV viral load > 200 copies/mL
 
 failures <- rna_art %>% 
   group_by(id) %>% 
