@@ -9,7 +9,7 @@ library(ipw)
 library(boot)
 library(paletteer)
 library(patchwork)
-
+library(broom)
 
 
 # Functions/Themes ----------------------------------------------------------
@@ -192,7 +192,7 @@ p <- ggsurvplot(fit = survfit(Surv(time, event_3) ~ group, data = df_analysis),
                 xlab = "\nYears since Baseline",
                 ylab = "Viral Failure\n",
                 tables.y.text.col = FALSE,
-                fun = "event",
+                # fun = "event",
                 conf.int = FALSE
 )
 
@@ -238,7 +238,7 @@ weights <- ipwpoint(exposure = group_numeric,
                     family = "binomial", 
                     link = "logit", 
                     numerator = ~1, # Stabilized weights
-                    denominator = ~adherence_locf + history_VF + n_conmeds, 
+                    denominator = ~female + adherence_locf + history_VF + n_conmeds, 
                     data = as.data.frame(df_analysis))
 
 summary(weights$ipw.weights)
@@ -246,7 +246,7 @@ summary(weights$ipw.weights)
 df_analysis$weights <- weights$ipw.weights
 
 
-
+?ipwpoint
 
 
 
@@ -287,3 +287,34 @@ tibble("HR" = b$t0,
        "LCI" = quantile(b$t, 0.025)[[1]],
        "UCI" = quantile(b$t, 0.975)[[1]]) %>%
   mutate_all(~scales::comma(exp(.x), accuracy = 0.01))
+
+svy_design <- svydesign(id = ~id, weights = ~weights, data = df_analysis)
+svycoxph(Surv(time, event_dicho) ~ group,  design=svy_design) %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  select(term, estimate, conf.low, conf.high, p.value)
+coxph(Surv(time, event_dicho) ~ group,  data=df_analysis) %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  select(term, estimate, conf.low, conf.high, p.value)
+mod_wght <- svykm(Surv(time, event_dicho) ~ group, design=svy_design)
+
+plot(mod_wght[[1]], col="black")
+lines(mod_wght[[2]], col="red")
+
+surv_curve <- tibble(time = c(mod_wght[[1]]$time, mod_wght[[2]]$time),
+                     surv = c(mod_wght[[1]]$surv, mod_wght[[2]]$surv), 
+                     treatment = rep(c("Current ART", "Switch to INSTI-based regimen"), 
+                                     times =  c(length(mod_wght[[1]]$time), 
+                                                length(mod_wght[[2]]$time))))
+
+kaplan_p
+ad_p <- surv_curve %>% 
+  ggplot(aes(x = time, y = surv)) + 
+  geom_line(aes(color = treatment)) + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linetype = 1, color = "grey90", size = 0.1),
+        legend.position = c(0.3, 0.8)) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     limits = c(0, 1))
+
+
+kaplan_p + ad_p
