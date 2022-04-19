@@ -120,43 +120,7 @@ df_death_fup_failure <- df_death_fup %>%
   left_join(failure_3, by = "id")
 
 
-
-# add Events and Censoring -----------------------------------------------------
-
-event_data <- df_death_fup_failure %>% 
-  # Add regdate 
-  left_join(pat %>% select(id, regdate)) %>% 
-  # failure 1 before failure 2
-  mutate(event_type = case_when(
-    !is.na(failure_1_date) & failure_1_date > trial_start ~ "failure 1",
-    !is.na(failure_2_date) & failure_2_date > trial_start ~ "failure 2",
-    !is.na(failure_3_date) & failure_3_date > trial_start ~ "failure 3",
-    TRUE ~ "no failure")) %>%  
-  # loss_to_fup before death (some are loss to fup and found later to be dead)
-  mutate(censor_reason = case_when(
-    loss_to_fup_date > trial_start & !is.na(loss_to_fup_date) ~ "loss to fup", 
-    death_date > trial_start & !is.na(death_date) ~ "death", 
-    TRUE ~ "none")) %>% 
-  # code event as 1 = failure 1, 2 = failure 2 and add censor dates
-  mutate(event = if_else(event_type == "failure 1", 1, 
-                         if_else(event_type == "failure 2", 2, 
-                                 if_else(event_type == "failure 3", 3, 0))), 
-         censor = if_else(censor_reason %in% c("death", "loss to fup"), 
-                          1, 0),
-         event_date = if_else(event_type == "failure 1", failure_1_date, 
-                              if_else(event_type == "failure 2", failure_2_date, NA_Date_)),
-         event3_date = if_else(event_type == "failure 3", failure_3_date, NA_Date_),
-         censor_date =  case_when(
-           censor_reason == "loss to fup" ~ loss_to_fup_date,
-           censor_reason == "death" ~ death_date)) %>% 
-  # Clean up
-  select(id, trial_start, trial_nr, regdate, event, event_date, event3_date, event_type, 
-         censor, censor_date, censor_reason)
-
-event_data %>% 
-  filter(event_type == "failure 3")
-
-# add last follow-up ------------------------------------------------------
+# add Last FUP -----------------------------------------------------
 
 last_fup <- fup %>% 
   select(id, fupdate) %>% 
@@ -164,21 +128,57 @@ last_fup <- fup %>%
   summarise(last_fupdate = last(fupdate, order_by = fupdate)) %>% 
   ungroup()
 
+# add Events and Censoring -----------------------------------------------------
 
-event_data <- event_data %>% 
-  left_join(last_fup, by = "id")
+switch_date <- elig_data %>% 
+  filter(switch_treatment == 1) %>% 
+  select(id, trial_start, switch_treatment) %>% 
+  arrange(id, trial_start) %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  select(id, switch_date = trial_start)
+
+event_data <- df_death_fup_failure %>% 
+  # add switch_date
+  left_join(switch_date) %>% 
+  # Add regdate 
+  left_join(pat %>% select(id, regdate)) %>% 
+  # add last fup 
+  left_join(last_fup) %>% 
+  mutate(event_type = case_when(
+    !is.na(failure_1_date) & failure_1_date > trial_start ~ "failure 1",
+    !is.na(failure_2_date) & failure_2_date > trial_start ~ "failure 2",
+    !is.na(failure_3_date) & failure_3_date > trial_start ~ "failure 3",
+    TRUE ~ "no failure")) %>% 
+  # loss_to_fup before death (some are loss to fup and found later to be dead)
+  filter(trial_start < death_date | is.na(death_date), 
+         trial_start < loss_to_fup_date |  is.na(loss_to_fup_date)) %>% 
+  mutate(time_date = pmin(failure_1_date, failure_2_date, 
+                          switch_date, death_date, loss_to_fup_date, 
+                          last_fupdate, na.rm = TRUE),
+         time3_date = pmin(failure_1_date, failure_2_date, failure_3_date, 
+                           switch_date, death_date, loss_to_fup_date, 
+                           last_fupdate, na.rm = TRUE)) %>% 
+  mutate(event_type = case_when(time_date == failure_1_date ~ "failure 1", 
+                                time_date == failure_2_date ~ "failure 2", 
+                                time3_date == failure_3_date ~ "failure 3", 
+                                TRUE ~ "no failure"),
+         censor_reason = case_when(time_date == death_date ~ "death", 
+                                   time_date == loss_to_fup_date ~ "loss to fup",
+                                   time_date == switch_date ~ "switched", 
+                                   time_date == last_fupdate ~ "last fup date",
+                                   TRUE ~ "none")) %>% 
+  mutate(event = as.numeric(event_type %in% 
+                              c("failure 1", "failure 2")), 
+         event3 = as.numeric(event_type %in% 
+                               c("failure 1", "failure 2", "failure 3"))) %>% 
+  select(id:trial_nr, time_date, time3_date, event_type, censor_reason, event, event3)
+
 
 
 
 # Add time variable -------------------------------------------------------
-
-# Earliest of event, censor or last_fup date
-event_data <- event_data %>% 
-  rowwise() %>% 
-  mutate(time_date = min(event_date, censor_date, last_fupdate, na.rm = TRUE), 
-         time3_date = min(event_date, event3_date, censor_date, last_fupdate, 
-                          na.rm = TRUE)) %>% 
-  ungroup()
 
 
 # Full data
@@ -186,26 +186,35 @@ full_df <- elig_data %>%
   left_join(event_data, by = c("id", "trial_start", "trial_nr"))
 
 
-aset <- full_df %>% 
-  # Filter only those who are eligilbe and where trial starts before time
-  filter(elig_current == 1 | elig_switch == 1) %>% 
+current <- full_df %>% 
+  # Filter only those who are eligible and where trial starts before time
+  filter(elig_current == 1) 
+
+switch <- full_df %>% 
+  filter(elig_switch == 1) %>% 
+  arrange(id, trial_start) %>% 
+  group_by(id) %>% 
+  slice(1) %>% # Some have 2 switch episodes. Remove them here
+  ungroup()
+
+aset <- bind_rows(current, switch) %>% 
   filter(trial_start < time_date)
+
+
 
 
 # Add outcome variables
 aset <- aset %>% 
   mutate(time = as.numeric((time_date - trial_start) / 365.25), 
          time_3 = as.numeric((time3_date - trial_start) / 365.25)) %>% 
-  mutate(event_dicho = as.numeric(event %in% c(1, 2)), 
-         event_3 = as.numeric(event %in% c(1, 2, 3))) %>% 
   mutate(group = if_else(elig_switch == 1, "Switch", "Current"), 
          group_numeric = as.numeric(group == "Switch"))
 
 
 
-write_rds(aset, here("processed", "05-analysis_data.rds"))
 
-####
+
+write_rds(aset, here("processed", "05-analysis_data.rds"))
 
 
 
