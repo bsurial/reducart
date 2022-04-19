@@ -146,6 +146,9 @@ event_data <- df_death_fup_failure %>%
   left_join(pat %>% select(id, regdate)) %>% 
   # add last fup 
   left_join(last_fup) %>% 
+  # add whether they switched or not
+  left_join(elig_data %>% select(id, trial_start, trial_nr, 
+                                 elig_switch, elig_current)) %>% 
   mutate(event_type = case_when(
     !is.na(failure_1_date) & failure_1_date > trial_start ~ "failure 1",
     !is.na(failure_2_date) & failure_2_date > trial_start ~ "failure 2",
@@ -154,12 +157,36 @@ event_data <- df_death_fup_failure %>%
   # loss_to_fup before death (some are loss to fup and found later to be dead)
   filter(trial_start < death_date | is.na(death_date), 
          trial_start < loss_to_fup_date |  is.na(loss_to_fup_date)) %>% 
-  mutate(time_date = pmin(failure_1_date, failure_2_date, 
-                          switch_date, death_date, loss_to_fup_date, 
-                          last_fupdate, na.rm = TRUE),
-         time3_date = pmin(failure_1_date, failure_2_date, failure_3_date, 
-                           switch_date, death_date, loss_to_fup_date, 
-                           last_fupdate, na.rm = TRUE)) %>% 
+  # Need to switch_date is censor date for those who didn't swithc, but not 
+  # for those who switched:
+  mutate(time_date = case_when(elig_switch != 1 ~ pmin(failure_1_date, 
+                                                       failure_2_date, 
+                                                       switch_date, 
+                                                       death_date, 
+                                                       loss_to_fup_date, 
+                                                       last_fupdate, 
+                                                       na.rm = TRUE),
+                               elig_switch == 1 ~ pmin(failure_1_date, 
+                                                       failure_2_date, 
+                                                       death_date, 
+                                                       loss_to_fup_date, 
+                                                       last_fupdate, 
+                                                       na.rm = TRUE)),
+         time3_date = case_when(elig_switch != 1 ~ pmin(failure_1_date, 
+                                                        failure_2_date,
+                                                        failure_3_date,
+                                                        switch_date, 
+                                                        death_date, 
+                                                        loss_to_fup_date, 
+                                                        last_fupdate, 
+                                                        na.rm = TRUE),
+                                elig_switch == 1 ~ pmin(failure_1_date, 
+                                                        failure_2_date,
+                                                        failure_3_date,
+                                                        death_date, 
+                                                        loss_to_fup_date, 
+                                                        last_fupdate, 
+                                                        na.rm = TRUE))) %>% 
   mutate(event_type = case_when(time_date == failure_1_date ~ "failure 1", 
                                 time_date == failure_2_date ~ "failure 2", 
                                 time3_date == failure_3_date ~ "failure 3", 
@@ -173,8 +200,8 @@ event_data <- df_death_fup_failure %>%
                               c("failure 1", "failure 2")), 
          event3 = as.numeric(event_type %in% 
                                c("failure 1", "failure 2", "failure 3"))) %>% 
-  select(id:trial_nr, time_date, time3_date, event_type, censor_reason, event, event3)
-
+  select(id:trial_nr, time_date, time3_date, event_type, 
+         censor_reason, event, event3)
 
 
 
@@ -202,14 +229,12 @@ aset <- bind_rows(current, switch) %>%
 
 
 
-
 # Add outcome variables
 aset <- aset %>% 
   mutate(time = as.numeric((time_date - trial_start) / 365.25), 
          time_3 = as.numeric((time3_date - trial_start) / 365.25)) %>% 
   mutate(group = if_else(elig_switch == 1, "Switch", "Current"), 
          group_numeric = as.numeric(group == "Switch"))
-
 
 
 
