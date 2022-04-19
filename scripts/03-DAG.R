@@ -10,14 +10,15 @@ node_details <- tribble(
   "viral_failure", "Virologic Failure", 4, 1
 )
 
-set.seed(1)
+set.seed(2)
 dag_data <- dagify(VF ~ switch + DDI,
                    VF ~ resistance + adherence + history_VF + nadir_CD4 + max_RNA,
                    history_VF ~ adherence + nadir_CD4 + max_RNA,
-                   switch ~ resistance + adherence + comorbidities + history_VF + DDI,
+                   switch ~ resistance + adherence + comorbidities + history_VF + DDI + max_RNA,
                    resistance ~ adherence + time_infected + history_VF,
                    switch ~ time_infected,
                    DDI ~ comorbidities,
+                   nadir_CD4 ~ max_RNA,
                    labels = c("VF" = "Viral Failure (VF)", 
                               "switch" = "Switch",
                               "DDI" = "DDI",
