@@ -113,10 +113,6 @@ df_sub <- df %>%
   left_join(art %>% select(-(num_art:precision)))
 
 
-# # I first work on 1 patient, and extend that later on
-# df_sub <- df_art %>% 
-#   # filter(id == 12601) %>% 
-#   select(id, treatment, moddate, enddate) 
 
 # Since the last treatment is ongoin, I create a fictive "enddate in future"
 df_sub <- df_sub %>% 
@@ -140,7 +136,7 @@ df_step1 <- df_step1 %>%
   mutate(rna_start = trial_start - 365, 
          rna_stop = trial_start + 14)
 
-# Only work with one ID
+
 rna <- lab %>% 
   select(id, rna, labdate) %>% 
   drop_na()
@@ -246,7 +242,7 @@ df_step3 <- rifa_df[df_step2,
                            days_suppressed_actual = i.days_suppressed_actual, 
                            rifamp = x.rifamp, rifa_drug = x.rifa_drug)] %>% 
   as_tibble() %>%
-  mutate(across(rifamp:rifa_drug, ~replace_na(.x, FALSE))) %>% 
+  mutate(rifamp = replace_na(rifamp, FALSE)) %>% 
   arrange(id, trial_nr, desc(rifamp)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
@@ -263,9 +259,9 @@ df_step4 <- carbam_df[df_step3,
           days_suppressed = i.days_suppressed, 
           days_suppressed_actual = i.days_suppressed_actual, 
           rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
-          carbam = x.carbam, carbam_drug = x.carbam)] %>% 
+          carbam = x.carbam, carbam_drug = x.carbam_drug)] %>% 
   as_tibble() %>%
-  mutate(across(carbam:carbam_drug, ~replace_na(.x, FALSE))) %>% 
+  mutate(carbam = replace_na(carbam, FALSE)) %>% 
   arrange(id, trial_nr, desc(carbam)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
@@ -281,11 +277,11 @@ df_step5 <- phenytoin_df[df_step4,
                         days_suppressed = i.days_suppressed, 
                         days_suppressed_actual = i.days_suppressed_actual, 
                         rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
-                        carbam = i.carbam, carbam_drug = i.carbam, 
+                        carbam = i.carbam, carbam_drug = i.carbam_drug, 
                         phenytoin = x.phenytoin, 
                         phenytoin_drug = x.phenytoin_drug)] %>% 
   as_tibble() %>%
-  mutate(across(phenytoin:phenytoin_drug, ~replace_na(.x, FALSE))) %>% 
+  mutate(phenytoin = replace_na(phenytoin, FALSE)) %>% 
   arrange(id, trial_nr, desc(phenytoin)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
@@ -301,14 +297,14 @@ df_step6 <- primidone_df[df_step5,
                days_suppressed = i.days_suppressed, 
                days_suppressed_actual = i.days_suppressed_actual, 
                rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
-               carbam = i.carbam, carbam_drug = i.carbam, 
+               carbam = i.carbam, carbam_drug = i.carbam_drug, 
                phenytoin = i.phenytoin, 
                phenytoin_drug = i.phenytoin_drug, 
                primidone = x.primidone, 
                primidone_drug = x.primidone_drug
                )] %>% 
   as_tibble() %>%
-  mutate(across(primidone:primidone_drug, ~replace_na(.x, FALSE))) %>% 
+  mutate(primidone = replace_na(primidone, FALSE)) %>% 
   arrange(id, trial_nr, desc(primidone)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
@@ -373,7 +369,7 @@ df_step7 <- adhe_df[df_step6,
                       days_suppressed = i.days_suppressed, 
                       days_suppressed_actual = i.days_suppressed_actual, 
                       rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
-                      carbam = i.carbam, carbam_drug = i.carbam, 
+                      carbam = i.carbam, carbam_drug = i.carbam_drug, 
                       phenytoin = i.phenytoin, 
                       phenytoin_drug = i.phenytoin_drug, 
                       primidone = i.primidone, 
@@ -429,7 +425,7 @@ df_step8 <- crea_df[df_step7,
           days_suppressed = i.days_suppressed, 
           days_suppressed_actual = i.days_suppressed_actual, 
           rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
-          carbam = i.carbam, carbam_drug = i.carbam, 
+          carbam = i.carbam, carbam_drug = i.carbam_drug, 
           phenytoin = i.phenytoin, 
           phenytoin_drug = i.phenytoin_drug, 
           primidone = i.primidone, 
@@ -584,7 +580,7 @@ rna_art <- on_treatment[rna,
 
 
 # Adherence data
-ad_table <- adhe %>% 
+ad_table <- adhe_df %>% 
   arrange(id, ad_date) %>% 
   select(-(amenddate:inputdate)) %>% 
   group_by(id) %>% 
@@ -592,7 +588,9 @@ ad_table <- adhe %>%
   ungroup() %>% 
   mutate(ad_date_windowed = ad_date - 21, 
          end_period_windowed = end_period - 21) %>% 
-  mutate(end_period = replace_na(end_period, dmy("01.01.2100"))) 
+  mutate(end_period = replace_na(end_period, dmy("01.01.2100"))) %>%  
+  select(id, missed_locf, missed, in_row, ad_date, end_period, 
+         ad_date_windowed, end_period_windowed)
 
 
 setDT(rna_art);setDT(ad_table)
@@ -607,18 +605,10 @@ rna_detailed_long <- ad_table[rna_art,
                                 on_art = i.on_art, 
                                 period_start = i.period_start, 
                                 period_stop = i.period_stop, 
-                                missed = x.missed, 
+                                missed = x.missed_locf, 
                                 in_row = x.in_row, 
                                 ad_date = x.ad_date)] %>% 
-  as_tibble() %>% 
-  mutate(missed = if_else(missed == "Z", NA_character_, missed),
-         missed = factor(missed, 
-                         labels = c("every day", 
-                                    "more than 1/week",
-                                    "once a week", 
-                                    "once every 2 weeks", 
-                                    "once a month", 
-                                    "never")))
+  as_tibble()
 
 
 
@@ -682,7 +672,7 @@ nadir_cd4 <- lab %>%
   group_by(id) %>% 
   summarise(nadir_cd4 = min(cd4))
 
-elig_data %>% select(-max_rna, -nadir_cd4) -> elig_data
+
 elig_data <- elig_data %>% 
   left_join(max_rna, by = "id") %>% 
   left_join(nadir_cd4, by = "id") %>% 
@@ -732,20 +722,30 @@ elig_data <- elig_data %>%
 
 
 # Unique Patients
-elig_data %>% 
+(t_switch_reg <- elig_data %>% 
   filter(elig_switch == 1) %>% 
-  count(treatment, sort = TRUE)
+  mutate(treatment = fct_infreq(treatment)) %>% 
+  select(treatment) %>% 
+  tbl_summary(label = treatment ~ "Switch Regimen") %>% 
+  bold_labels())
+
+gtsave(as_gt(t_switch_reg), here::here("tables", "04-switch_regimens.png"))
+
 
 elig_data %>% 
   filter(elig_current == 1) %>% 
   distinct_ids()
 
 
-elig_data %>% 
+(t_current_reg <- elig_data %>% 
   filter(elig_current == 1) %>% 
-  mutate(treatment_lumped = fct_lump(treatment, n = 30)) %>% 
-  count(treatment_lumped, sort = T) %>% 
-  print(n = 300)
+  mutate(treatment_lumped = fct_infreq(fct_lump(treatment, n = 15))) %>% 
+  select(treatment_lumped) %>% 
+  tbl_summary(label = treatment_lumped ~ "Current Regimen") %>% 
+  bold_labels())
+
+gtsave(as_gt(t_current_reg), here::here("tables", "04-current_regimens.png"))
+
 
 
 switchers_1 <- elig_data %>% 
@@ -775,6 +775,7 @@ all_1 <- bind_rows(switchers_1, current_1)
                 missing = "no",
                 digits = list(all_continuous() ~ 1, 
                               nadir_cd4 ~ 0)) %>% 
+    add_p() %>% 
     bold_labels())
 
 gtsave(as_gt(t_1), here::here("tables", "04-patient_characteristics.png"))
@@ -794,7 +795,7 @@ studypop_filtered <- elig_data %>%
            t_good_adh = time_good_adh_actual / 365.25) %>% 
     select(group, female, ethnicity, age, riskgroup, max_rna_log, 
            nadir_cd4, t_suppressed_actual, t_good_adh, adherence_locf, 
-           egfr, ci_drug, history_VF, nrti_mono, n_conmeds) %>% 
+           egfr, history_VF, nrti_mono, n_conmeds) %>% 
     labelled::set_variable_labels(
       female = "Female sex",
       ethnicity = "Ethnicity",
@@ -806,12 +807,13 @@ studypop_filtered <- elig_data %>%
       t_good_adh = "Time with good adherence, years (IQR)",
       adherence_locf = "Missed dose in the last 4 weeks",
       egfr = "eGFR at trial start, ml/min (IQR)",
-      ci_drug = "Receipt of contra-indicated drug",
       history_VF = "History of virological failure", 
       nrti_mono = "History of single/dual NRTI therapy",
       n_conmeds = "Nr. of non-HIV drugs"
     ) %>%
-    tbl_summary(by = group) %>% 
+    tbl_summary(by = group, 
+                digits = all_continuous() ~ 1) %>% 
+    add_p() %>% 
     bold_labels())
 
 gtsave(as_gt(t_2), here::here("tables", "04-patient_characteristics_alltrials.png"))
