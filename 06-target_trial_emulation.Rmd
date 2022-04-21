@@ -1,0 +1,200 @@
+---
+title: "HIV Simplification - A target trial emulation"
+author: "Bernard Surial"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+# Libraries ---------------------------------------------------------------
+library(tidyverse)
+library(bernr)
+library(here)
+library(survminer)
+library(survival)
+library(ipw)
+library(boot)
+library(paletteer)
+library(patchwork)
+library(broom)
+library(survey)
+```
+
+```{r theme}
+# Functions/Themes ----------------------------------------------------------
+theme_set(theme_light(base_family = "Lato"))
+theme_update(
+  plot.title.position = "plot",
+  axis.title.x = element_text(margin = margin(t = 1, unit = "line")),
+  axis.title.y = element_text(margin = margin(r = 1, unit = "line")),
+  plot.title = element_text(face = "bold", margin = margin(b = 1, unit = "line")),
+  strip.background = element_rect(fill = "white"),
+  strip.text = element_text(color = "black", face = "bold")
+)
+```
+
+```{r read_data}
+# Read data ---------------------------------------------------------------
+
+df_analysis <- pro_read("05-analysis_data.rds")
+
+# Missing resistance data are coded as "Missing"
+df_analysis <- df_analysis %>% 
+  mutate(across(c(M184VI, K65R), 
+                ~fct_explicit_na(factor(.x, levels = c(TRUE, FALSE), 
+                                        labels = c("Yes", "No"))))) %>% 
+  mutate(TAMS_nc = fct_explicit_na(factor(TAMS_n)))
+
+
+# Separate DF for the outcome "Any HIV > 200" -> can occur before the other 
+# outcome, and therefore need to "re-filter"
+df_analysis_3 <- df_analysis %>% filter(trial_start < time3_date)
+
+
+
+
+
+```
+
+### Definition of Outcome
+
+I decided to take 2 distinct outcomes:
+
+1)  Time to confirmed virological failure, defined as **2 consecutive HIV viral loads \> 200 copies/mL** (FAILURE 1) or **1 viral load \> 200 copies/mL followed by a treatment change** (FAILURE 2)
+2)  **Time to any HIV viral load above 200 copies/mL** (FAILURE 3)
+
+
+
+### Any HIV viral load above 200 cp7mL
+
+```{r unadjusted_event3}
+# event 1/0 includes only failure 1 and 2
+df_analysis_3 %>% 
+  count(event, event_type)
+
+
+# event 1/0 includes only failure 1 and 2
+df_analysis %>% 
+  count(event3, event_type)
+
+
+# Kaplan Meier Plot -------------------------------------------------------
+p <- ggsurvplot(fit = survfit(Surv(time_3, event3) ~ group, data = df_analysis_3),
+                ggtheme = theme_light(base_family = "Lato"),
+                palette = paletteer_d(`"ggsci::default_jama"`),
+                xlim = c(0, 7),
+                risk.table = TRUE,
+                legend = "right",
+                legend.title = "",
+                legend.labs = c("Boosted ART regimen", "Switch to INSTI-based regimen"),
+                censor = FALSE,
+                break.time.by = 1,
+                fontsize = 3,
+                size = 0.7,
+                risk.table.title = "",
+                xlab = "\nYears since Baseline",
+                ylab = "Viral Failure\n",
+                tables.y.text.col = FALSE,
+                fun = "event",
+                conf.int = FALSE
+)
+
+kaplan_p <- p$plot + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linetype = 1, color = "grey90", size = 0.1),
+        legend.position = c(0.3, 0.8)) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+
+kaplan_t <- p$table + 
+  labs(y = NULL, subtitle = "Individuals at risk") +
+  theme(panel.grid = element_blank())
+
+kaplan_p / kaplan_t + 
+  plot_layout(heights = c(5, 1)) &
+  theme(
+    panel.grid.minor.x = element_blank(),
+    plot.title = element_text(
+      face = "bold",
+      margin = margin(b = 1.24, unit = "line")
+    ),
+    plot.subtitle = element_text(
+      face = "bold",
+      margin = margin(b = 1.24, unit = "line")
+    ),
+    axis.title.x = element_text(margin = margin(t = 1.24, unit = "line"))
+  )
+
+
+ggsave(here("graphs", "06-kaplan_meier.png"), 
+       bg = "white", width = 7, height = 5, dpi = 300)
+ggsave(here("graphs", "06-kaplan_meier.pdf"), 
+       bg = "white", width = 7, height = 5, dpi = 300, device = cairo_pdf)
+```
+
+
+```{r adjusted_event3}
+# Inverse Probability Weighting -------------------------------------------
+
+
+weights <- ipwpoint(exposure = group_numeric, 
+                    family = "binomial", 
+                    link = "logit", 
+                    numerator = ~1, # Stabilized weights
+                    denominator = ~adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + TAMS_nc + I(log(max_rna+1)), 
+                    data = as.data.frame(df_analysis_3))
+
+summary(weights$ipw.weights)
+
+# # Trim weights at 1 and 99% (should I do this?)
+# trims <-  quantile(weights$ipw.weights, probs = c(0.01, 0.99))
+# weights$ipw.weights[weights$ipw.weights > trims[2]] <- as.numeric(trims[2])
+# weights$ipw.weights[weights$ipw.weights < trims[1]] <- as.numeric(trims[1])
+
+
+df_analysis_3$weights <- weights$ipw.weights
+
+
+# Fit weighted model ------------------------------------------------------
+svy_design <- svydesign(id = ~id, weights = ~weights, data = df_analysis_3)
+
+svycoxph(Surv(time_3, event3) ~ group,  design=svy_design) %>% 
+  tidy(exp = TRUE, conf.int = TRUE)
+
+
+
+mod_wght <- svykm(Surv(time_3, event3) ~ group, design=svy_design)
+
+surv_curve <- tibble(time = c(mod_wght[[1]]$time, mod_wght[[2]]$time),
+                     surv = 1-c(mod_wght[[1]]$surv, mod_wght[[2]]$surv), 
+                     treatment = rep(c("Current ART", "Switch to INSTI-based regimen"), 
+                                     times =  c(length(mod_wght[[1]]$time), 
+                                                length(mod_wght[[2]]$time))))
+
+ad_p <- surv_curve %>% 
+  ggplot(aes(x = time, y = surv)) + 
+  geom_line(aes(color = treatment), size = 0.75) + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linetype = 1, color = "grey90", size = 0.1),
+        legend.position = c(0.3, 0.8)) + 
+  labs(color = NULL, 
+       x = "Years since Baseline", 
+       y = "Viral Failure", 
+       subtitle = "Adjusted Survival Curve")
+
+kaplan_p <- kaplan_p + labs(subtitle = "Unadjusted Survival Curve")
+
+kaplan_p + ad_p + 
+  scale_color_paletteer_d("ggsci::default_jama") & 
+  theme(legend.position = c(0.4, 0.9), 
+        plot.subtitle = element_text(hjust = 0.5)) & 
+   scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     limits = c(0, 0.18))
+
+ggsave(here("graphs", "06-kaplan_adj_surv_any.png"), 
+       dpi = 300, bg = "white", width = 10, height = 6)
+```
