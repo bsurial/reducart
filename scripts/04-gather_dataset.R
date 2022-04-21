@@ -9,7 +9,7 @@ library(lubridate)
 library(nephro)
 library(gtsummary)
 library(gt)
-
+library(here)
 set.seed(12)
 
 
@@ -494,21 +494,75 @@ df_step10 <- df_step9 %>%
 
 
 
+# Add resistance data -----------------------------------------------------
+
+resi_data <- read_csv(here("data", "2201_resistance", "2201_drm.csv")) %>% 
+  select(-1) 
+
+res_cum <- resi_data %>% 
+  select(id = PATIENT, dat, ends_with("_c"))
+
+df_step10_res <- df_step10 %>% 
+  select(id, trial_start) %>% 
+  left_join(res_cum) %>% 
+  filter(dat < trial_start | is.na(dat)) %>%
+  arrange(id, trial_start, desc(dat)) %>% 
+  group_by(id, trial_start) %>% 
+  slice(1) %>% 
+  ungroup()
+
+
+tams <- "(M41[A-Z]?[A-Z]?)|(D67[A-Z]?[A-Z]?)|(K70[R])|(L210[A-Z]?[A-Z]?)|(T215[A-Z]?[A-Z]?)|(K219[A-Z]?[A-Z]?)"
+
+
+df_step10_nrti <- df_step10 %>% 
+  left_join(df_step10_res) %>% 
+  select(id, trial_start, dat, NRTI_c) %>% 
+  mutate(TAMS = str_extract_all(NRTI_c, tams)) %>% 
+  mutate(TAMS_n = map(TAMS, ~length(.x)), 
+         TAMS = map(TAMS, ~paste0(.x, collapse = "|"))) %>% 
+  unnest(c(TAMS, TAMS_n)) %>% 
+  mutate(K65R = str_detect(NRTI_c, "K65R"), 
+         M184VI = str_detect(NRTI_c, "M184V?I?"), 
+         T69_ins = str_detect(NRTI_c, "T69Insertion"), 
+         Q151M = str_detect(NRTI_c, "Q151M[A-Z]?|Q151QKLM"))
+
+
+df_step10_insti <- df_step10 %>% 
+  left_join(df_step10_res) %>% 
+  select(id, trial_start, dat, starts_with("INSTI.")) %>% 
+  mutate(major_insti = str_detect(INSTI.Major_c, "Q148|R263|G118"), 
+         n_insti = str_count(str_replace(INSTI.Major_c, ",", " "), "\\w+"), 
+         major_insti = if_else(n_insti > 1, TRUE, major_insti))
+
+
+df_step11 <- df_step10 %>% 
+  left_join(df_step10_nrti) %>% 
+  left_join(df_step10_insti) %>% 
+  left_join(df_step10_res %>% select(-INSTI.Accessory_c))
+
+
+
+
 
 # Assess eligibility for each trial ---------------------------------------
 
-elig_data <- df_step10 %>% 
+elig_data <- df_step11 %>% 
   mutate(elig_current = if_else(elig_treatment == 1 & 
                           days_suppressed_actual >= 180 & 
                           egfr >= 30 & 
                           time_good_adh_actual >= 180 &
-                          ci_drug == FALSE, 
+                          ci_drug == FALSE & 
+                          (major_insti == FALSE | is.na(major_insti)) &
+                          (Q151M == FALSE | is.na(Q151M)), 
                         1, 0), 
          elig_switch = if_else(switch_treatment == 1 & 
                                  days_suppressed_actual >= 180 & 
                                  egfr >= 30 & 
                                  time_good_adh_actual >= 180 &
-                                 ci_drug == FALSE,
+                                 ci_drug == FALSE &
+                                 (major_insti == FALSE | is.na(major_insti)) &
+                                 (Q151M == FALSE | is.na(Q151M)),
                                1, 0))
 
 
@@ -715,6 +769,9 @@ conmeds <- drug_nohiv[elig_small,
 
 elig_data <- elig_data %>% 
   left_join(conmeds, by = c("id", "trial_start"))
+
+
+
 
 
 
