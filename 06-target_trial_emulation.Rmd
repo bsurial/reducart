@@ -2,7 +2,10 @@
 title: "HIV Simplification - A target trial emulation"
 author: "Bernard Surial"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
@@ -22,6 +25,9 @@ library(paletteer)
 library(patchwork)
 library(broom)
 library(survey)
+library(smd)
+library(tableone)
+library(gtsummary)
 ```
 
 ```{r theme}
@@ -47,7 +53,8 @@ df_analysis <- df_analysis %>%
   mutate(across(c(M184VI, K65R), 
                 ~fct_explicit_na(factor(.x, levels = c(TRUE, FALSE), 
                                         labels = c("Yes", "No"))))) %>% 
-  mutate(TAMS_nc = fct_explicit_na(factor(TAMS_n)))
+  mutate(TAMS_nc = fct_explicit_na(factor(TAMS_n))) %>% 
+  mutate(adherence_locf = fct_drop(adherence_locf))
 
 
 # Separate DF for the outcome "Any HIV > 200" -> can occur before the other 
@@ -55,6 +62,14 @@ df_analysis <- df_analysis %>%
 df_analysis_3 <- df_analysis %>% filter(trial_start < time3_date)
 
 
+# Censor everyone after 5 years
+df_analysis_3 <- df_analysis_3 %>% 
+  mutate(event3 = if_else(time_3 >= 5 & event3 == 1, 0, event3), 
+         time_3 = if_else(time_3 >= 5, 5, time_3))
+
+df_analysis <- df_analysis %>% 
+  mutate(event = if_else(time >= 5 & event == 1, 0, event), 
+         time = if_else(time >= 5, 5, time))
 
 
 
@@ -86,7 +101,7 @@ df_analysis %>%
 p <- ggsurvplot(fit = survfit(Surv(time_3, event3) ~ group, data = df_analysis_3),
                 ggtheme = theme_light(base_family = "Lato"),
                 palette = paletteer_d(`"ggsci::default_jama"`),
-                xlim = c(0, 7),
+                xlim = c(0, 5),
                 risk.table = TRUE,
                 legend = "right",
                 legend.title = "",
@@ -136,19 +151,26 @@ ggsave(here("graphs", "06-kaplan_meier.pdf"),
 ```
 
 
-```{r adjusted_event3}
+```{r weights_event3}
 # Inverse Probability Weighting -------------------------------------------
 
+df_analysis_3 <- df_analysis_3 %>% 
+  mutate(log_max_rna = if_else(max_rna > 0, log(max_rna), 0),
+         anyTAMS = if_else(TAMS_n > 0, TRUE, FALSE))
 
 weights <- ipwpoint(exposure = group_numeric, 
                     family = "binomial", 
                     link = "logit", 
                     numerator = ~1, # Stabilized weights
                     denominator = ~adherence_locf + history_VF + n_conmeds + 
-                                   M184VI + K65R + TAMS_nc + I(log(max_rna+1)), 
+                                   M184VI + K65R + anyTAMS + log_max_rna, 
                     data = as.data.frame(df_analysis_3))
 
-summary(weights$ipw.weights)
+wt_summary <- summary(weights$ipw.weights)
+ tibble(quantile = names(wt_summary), 
+        weight = wt_summary) %>% 
+  knitr::kable(digits = 3)
+
 
 # # Trim weights at 1 and 99% (should I do this?)
 # trims <-  quantile(weights$ipw.weights, probs = c(0.01, 0.99))
@@ -156,22 +178,89 @@ summary(weights$ipw.weights)
 # weights$ipw.weights[weights$ipw.weights < trims[1]] <- as.numeric(trims[1])
 
 
-df_analysis_3$weights <- weights$ipw.weights
+df_analysis_3$wts <- weights$ipw.weights
 
 
+df_analysis_3 %>% 
+  ggplot(aes(x = wts)) + 
+  geom_density(aes(fill = group), alpha = 0.5) + 
+  # scale_y_continuous(labels = scales::percent_format(accuracy = 1)) + 
+  facet_wrap(~group, scales = "free_y") +
+  theme(legend.position = "None") + 
+  labs(x = "Weights", y = "Density") + 
+  theme(panel.grid = element_blank()) + 
+  scale_x_continuous(limits = c(-1, 4)) +
+  scale_fill_paletteer_d("awtools::mpalette")
+  
+# Survey Design for event 3 ------------------------------------------------------
+svy_design <- svydesign(id = ~1, weights = ~wts, data = df_analysis_3)
+
+vars <- c("adherence_locf", "history_VF","n_conmeds", "M184VI","K65R", 
+          "anyTAMS", "log_max_rna")
+
+tabUnmatched <- CreateTableOne(vars = vars, 
+                               strata = "group", data = df_analysis_3, test = FALSE)
+
+tabWeighted <- svyCreateTableOne(vars = vars, strata = "group", 
+                                 data = svy_design, test = FALSE)
+
+
+
+dataPlot <- data.frame(variable   = rownames(ExtractSmd(tabUnmatched)),
+                       Unweighted  = as.numeric(ExtractSmd(tabUnmatched)),
+                       Weighted   = as.numeric(ExtractSmd(tabWeighted)))
+
+
+dataPlot %>%
+  pivot_longer(-variable) %>% 
+  arrange(name, value) %>% 
+  mutate(variable = fct_inorder(variable)) %>%
+  ggplot(aes(y = value, x = variable)) + 
+  geom_hline(yintercept = 0.1, linetype = 2, color = "grey70") +
+  geom_point(aes(color = name)) +
+  geom_line(aes(group = name, color =name)) + 
+  coord_flip() +
+  labs(x = "Variable", y = "SMD") + 
+  scale_color_paletteer_d("ggsci::default_nejm") + 
+  theme(panel.grid = element_blank()) + 
+  labs(color = NULL) 
+
+
+
+df_3_sub <- df_analysis_3 %>% 
+  select(age, female, ethnicity, riskgroup, egfr, dplyr::all_of(vars), group, wts)
+
+svy_sub_design <- svydesign(id = ~1, weights = ~wts, data = df_3_sub)
+
+
+suppressMessages(tbl <- tbl_svysummary(svy_sub_design, by = "group") %>% 
+  add_difference(everything() ~ "smd") %>% 
+  modify_column_hide(c(ci, p.value)))
+
+tbl
+```
+
+
+```{r adjusted_event3_table}
 # Fit weighted model ------------------------------------------------------
-svy_design <- svydesign(id = ~id, weights = ~weights, data = df_analysis_3)
+svy_design <- svydesign(id = ~1, weights = ~wts, data = df_analysis_3)
 
-svycoxph(Surv(time_3, event3) ~ group,  design=svy_design) %>% 
-  tidy(exp = TRUE, conf.int = TRUE)
+m_cox3 <- svycoxph(Surv(time_3, event3) ~ group,  design=svy_design) 
+
+m_cox3 %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  select(term, adj.HR = estimate, conf.low, conf.high, p.value) %>% 
+  mutate(p.value = scales::pvalue(p.value)) %>% 
+  knitr::kable(digits = 2)
+```
 
 
-
+```{r adjusted_event3_survivalcurve}
 mod_wght <- svykm(Surv(time_3, event3) ~ group, design=svy_design)
 
 surv_curve <- tibble(time = c(mod_wght[[1]]$time, mod_wght[[2]]$time),
                      surv = 1-c(mod_wght[[1]]$surv, mod_wght[[2]]$surv), 
-                     treatment = rep(c("Current ART", "Switch to INSTI-based regimen"), 
+                     treatment = rep(c("Boosted ART regimen", "Switch to INSTI-based regimen"), 
                                      times =  c(length(mod_wght[[1]]$time), 
                                                 length(mod_wght[[2]]$time))))
 
@@ -193,8 +282,236 @@ kaplan_p + ad_p +
   theme(legend.position = c(0.4, 0.9), 
         plot.subtitle = element_text(hjust = 0.5)) & 
    scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
-                     limits = c(0, 0.18))
+                     limits = c(0, 0.18)) 
 
 ggsave(here("graphs", "06-kaplan_adj_surv_any.png"), 
        dpi = 300, bg = "white", width = 10, height = 6)
 ```
+
+
+```{r adjusted_event3_ipwmod}
+glm(group_numeric ~adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + anyTAMS + log_max_rna, 
+    family = "binomial", data = df_analysis_3) %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  mutate(p.value = scales::pvalue(p.value)) %>% 
+  select(term, estimate, conf.low, conf.high, p.value) %>% 
+  knitr::kable(digits = 2)
+```
+
+
+
+### Confirmed virological failure
+
+```{r unadjusted_event}
+# event 1/0 includes only failure 1 and 2
+df_analysis %>% 
+  count(event, event_type)
+
+
+
+# Kaplan Meier Plot -------------------------------------------------------
+p2 <- ggsurvplot(fit = survfit(Surv(time, event) ~ group, data = df_analysis),
+                ggtheme = theme_light(base_family = "Lato"),
+                palette = paletteer_d(`"ggsci::default_jama"`),
+                xlim = c(0, 5),
+                risk.table = TRUE,
+                legend = "right",
+                legend.title = "",
+                legend.labs = c("Boosted ART regimen", "Switch to INSTI-based regimen"),
+                censor = FALSE,
+                break.time.by = 1,
+                fontsize = 3,
+                size = 0.7,
+                risk.table.title = "",
+                xlab = "\nYears since Baseline",
+                ylab = "Viral Failure\n",
+                tables.y.text.col = FALSE,
+                fun = "event",
+                conf.int = FALSE
+)
+
+kaplan_p2 <- p2$plot + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linetype = 1, color = "grey90", size = 0.1),
+        legend.position = c(0.3, 0.8)) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1))
+
+kaplan_t2 <- p2$table + 
+  labs(y = NULL, subtitle = "Individuals at risk") +
+  theme(panel.grid = element_blank())
+
+kaplan_p2 / kaplan_t2 + 
+  plot_layout(heights = c(5, 1)) &
+  theme(
+    panel.grid.minor.x = element_blank(),
+    plot.title = element_text(
+      face = "bold",
+      margin = margin(b = 1.24, unit = "line")
+    ),
+    plot.subtitle = element_text(
+      face = "bold",
+      margin = margin(b = 1.24, unit = "line")
+    ),
+    axis.title.x = element_text(margin = margin(t = 1.24, unit = "line"))
+  )
+
+
+ggsave(here("graphs", "06-kaplan_meier_conf_VF.png"), 
+       bg = "white", width = 7, height = 5, dpi = 300)
+ggsave(here("graphs", "06-kaplan_meier_conf_VF.pdf"), 
+       bg = "white", width = 7, height = 5, dpi = 300, device = cairo_pdf)
+```
+
+
+```{r weights_event}
+# Inverse Probability Weighting -------------------------------------------
+
+df_analysis <- df_analysis %>% 
+  mutate(log_max_rna = if_else(max_rna > 0, log(max_rna), 0),
+         anyTAMS = if_else(TAMS_n > 0, TRUE, FALSE))
+
+weights2 <- ipwpoint(exposure = group_numeric, 
+                    family = "binomial", 
+                    link = "logit", 
+                    numerator = ~1, # Stabilized weights
+                    denominator = ~adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + anyTAMS + log_max_rna, 
+                    data = as.data.frame(df_analysis))
+
+wt_summary2 <- summary(weights2$ipw.weights)
+ tibble(quantile = names(wt_summary2), 
+        weight = wt_summary2) %>% 
+  knitr::kable(digits = 3)
+
+
+# # Trim weights at 1 and 99% (should I do this?)
+# trims <-  quantile(weights$ipw.weights, probs = c(0.01, 0.99))
+# weights$ipw.weights[weights$ipw.weights > trims[2]] <- as.numeric(trims[2])
+# weights$ipw.weights[weights$ipw.weights < trims[1]] <- as.numeric(trims[1])
+
+
+df_analysis$wts <- weights2$ipw.weights
+
+
+df_analysis %>% 
+  ggplot(aes(x = wts)) + 
+  geom_density(aes(fill = group), alpha = 0.5) + 
+  # scale_y_continuous(labels = scales::percent_format(accuracy = 1)) + 
+  facet_wrap(~group, scales = "free_y") + 
+  theme(legend.position = "None") + 
+  labs(x = "Weights", y = "Density") + 
+  theme(panel.grid = element_blank()) + 
+  scale_x_continuous(limits = c(-1, 4)) + 
+  scale_fill_paletteer_d("awtools::mpalette")
+  
+# Survey Design for event 3 ------------------------------------------------------
+svy_design2 <- svydesign(id = ~1, weights = ~wts, data = df_analysis)
+
+vars <- c("adherence_locf", "history_VF","n_conmeds", "M184VI","K65R", 
+          "anyTAMS", "log_max_rna")
+
+tabUnmatched2 <- CreateTableOne(vars = vars, 
+                               strata = "group", data = df_analysis, test = FALSE)
+
+tabWeighted2 <- svyCreateTableOne(vars = vars, strata = "group", 
+                                 data = svy_design2, test = FALSE)
+
+
+
+dataPlot2 <- data.frame(variable   = rownames(ExtractSmd(tabUnmatched2)),
+                       Unweighted  = as.numeric(ExtractSmd(tabUnmatched2)),
+                       Weighted   = as.numeric(ExtractSmd(tabWeighted2)))
+
+
+dataPlot2 %>%
+  pivot_longer(-variable) %>% 
+  arrange(name, value) %>% 
+  mutate(variable = fct_inorder(variable)) %>%
+  ggplot(aes(y = value, x = variable)) + 
+  geom_hline(yintercept = 0.1, linetype = 2, color = "grey70") +
+  geom_point(aes(color = name)) +
+  geom_line(aes(group = name, color =name)) + 
+  coord_flip() +
+  labs(x = "Variable", y = "SMD") + 
+  scale_color_paletteer_d("ggsci::default_nejm") + 
+  theme(panel.grid = element_blank()) + 
+  labs(color = NULL) 
+
+
+
+df_sub <- df_analysis %>% 
+  select(age, female, ethnicity, riskgroup, egfr, dplyr::all_of(vars), group, wts)
+
+svy_sub_design2 <- svydesign(id = ~1, weights = ~wts, data = df_sub)
+
+
+suppressMessages(tbl <- tbl_svysummary(svy_sub_design2, by = "group") %>% 
+  add_difference(everything() ~ "smd") %>% 
+  modify_column_hide(c(ci, p.value)))
+
+tbl
+```
+
+
+```{r adjusted_event_table}
+# Fit weighted model ------------------------------------------------------
+svy_design2 <- svydesign(id = ~1, weights = ~wts, data = df_analysis)
+
+m_cox2 <- svycoxph(Surv(time, event) ~ group,  design=svy_design2) 
+
+m_cox2 %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  select(term, adj.HR = estimate, conf.low, conf.high, p.value) %>% 
+  mutate(p.value = scales::pvalue(p.value)) %>% 
+  knitr::kable(digits = 2)
+```
+
+
+```{r adjusted_event_survivalcurve}
+mod_wght2 <- svykm(Surv(time, event) ~ group, design=svy_design2)
+
+surv_curve2 <- tibble(time = c(mod_wght2[[1]]$time, mod_wght2[[2]]$time),
+                     surv = 1-c(mod_wght2[[1]]$surv, mod_wght2[[2]]$surv), 
+                     treatment = rep(c("Boosted ART regimen", "Switch to INSTI-based regimen"), 
+                                     times =  c(length(mod_wght2[[1]]$time), 
+                                                length(mod_wght2[[2]]$time))))
+
+ad_p2 <- surv_curve2 %>% 
+  ggplot(aes(x = time, y = surv)) + 
+  geom_line(aes(color = treatment), size = 0.75) + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linetype = 1, color = "grey90", size = 0.1),
+        legend.position = c(0.3, 0.8)) + 
+  labs(color = NULL, 
+       x = "Years since Baseline", 
+       y = "Viral Failure", 
+       subtitle = "Adjusted Survival Curve")
+
+kaplan_p2 <- kaplan_p2 + labs(subtitle = "Unadjusted Survival Curve")
+
+kaplan_p2 + ad_p2 + 
+  scale_color_paletteer_d("ggsci::default_jama") & 
+  theme(legend.position = c(0.4, 0.9), 
+        plot.subtitle = element_text(hjust = 0.5)) & 
+   scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
+                     limits = c(0, 0.18)) 
+
+ggsave(here("graphs", "06-kaplan_adj_surv_conf_VF.png"), 
+       dpi = 300, bg = "white", width = 10, height = 6)
+```
+
+
+```{r adjusted_event_ipwmodel}
+
+glm(group_numeric ~ adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + anyTAMS + log_max_rna, 
+    family = "binomial", data = df_analysis) %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  mutate(p.value = scales::pvalue(p.value)) %>% 
+  select(term, estimate, conf.low, conf.high, p.value) %>% 
+  knitr::kable(digits = 2)
+```
+
+
+

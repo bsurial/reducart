@@ -10,7 +10,7 @@ library(boot)
 library(paletteer)
 library(patchwork)
 library(broom)
-
+library(survey)
 
 # Functions/Themes ----------------------------------------------------------
 theme_set(theme_light(base_family = "Lato"))
@@ -314,7 +314,15 @@ ad_p <- surv_curve %>%
         panel.grid.major = element_line(linetype = 1, color = "grey90", size = 0.1),
         legend.position = c(0.3, 0.8)) + 
   scale_y_continuous(labels = scales::percent_format(accuracy = 1), 
-                     limits = c(0, 1))
+                     limits = c(0, 1)) + 
+  labs(color = NULL, 
+       x = "Years since Baseline", 
+       y = "Viral Failure")
 
 
-kaplan_p + ad_p
+kaplan_p + ad_p + 
+  scale_color_paletteer_d("ggsci::default_jama") & 
+  theme(legend.position = c(0.3, 0.5))
+
+ggsave(here("graphs", "06-kaplan_adj_surv_any.png"), 
+       dpi = 300, bg = "white", width = 10, height = 6)
