@@ -54,6 +54,7 @@ df_analysis <- df_analysis %>%
                 ~fct_explicit_na(factor(.x, levels = c(TRUE, FALSE), 
                                         labels = c("Yes", "No"))))) %>% 
   mutate(TAMS_nc = fct_explicit_na(factor(TAMS_n))) %>% 
+  mutate(log_max_rna = if_else(max_rna > 0, log(max_rna), 0)) %>% 
   mutate(adherence_locf = fct_drop(adherence_locf))
 
 
@@ -74,6 +75,79 @@ df_analysis <- df_analysis %>%
 
 
 ```
+
+
+
+### Summary of the Study Population
+
+```{r}
+(t_1 <- df_analysis %>% 
+  distinct(id, group, female, ethnicity, riskgroup, nadir_cd4, log_max_rna) %>% 
+  select(-id) %>% 
+  labelled::set_variable_labels(
+    female = "Female sex",
+    ethnicity = "Ethnicity",
+    riskgroup = "HIV transmission group",
+    log_max_rna = "Pretreatment HIV viral load, log cp/mL (IQR)",
+    nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)"
+  ) %>% 
+  tbl_summary(by = group) %>% 
+  add_p())
+
+gt::gtsave(as_gt(t_1), here::here("tables", "06-patient_characteristics_distinct.png"))
+
+
+
+(t_2 <- df_analysis %>% 
+  select(group, female, ethnicity, age, riskgroup, log_max_rna, 
+       nadir_cd4, days_suppressed_actual, time_good_adh_actual, adherence_locf, 
+       egfr, history_VF, nrti_mono, n_conmeds) %>% 
+  mutate(across(c(days_suppressed_actual, time_good_adh_actual), ~.x/365.25)) %>% 
+  labelled::set_variable_labels(
+    female = "Female sex",
+    ethnicity = "Ethnicity",
+    age = "Age at trial start, years (IQR)",
+    riskgroup = "HIV transmission group",
+    log_max_rna = "Pretreatment HIV viral load, log cp/mL (IQR)",
+    nadir_cd4 = "Nadir CD4 count, cells/µL (IQR)",
+    days_suppressed_actual = "Time with HIV <50 cp/mL, years (IQR)",
+    time_good_adh_actual = "Time with good adherence, years (IQR)",
+    adherence_locf = "Missed dose in the last 4 weeks",
+    egfr = "eGFR at trial start, ml/min (IQR)",
+    history_VF = "History of virological failure", 
+    nrti_mono = "History of single/dual NRTI therapy",
+    n_conmeds = "Nr. of non-HIV drugs"
+  ) %>%
+  tbl_summary(by = group, 
+              digits = all_continuous() ~ 1) %>% 
+  add_p() %>% 
+  bold_labels())
+
+gt::gtsave(as_gt(t_2), here::here("tables", "06-patient_characteristics_alltrials.png"))
+
+
+df_analysis %>% 
+  group_by(id) %>% 
+  summarise(trials = max(trial_nr)) %>% 
+  summarise(median_trial = median(trials), 
+            p25_trials = quantile(trials, 0.25), 
+            p75_trials = quantile(trials, 0.75))
+```
+
+
+```{r}
+df_analysis %>% 
+  filter(group == "Switch") %>% 
+  count(treatment, sort = TRUE) %>% 
+  knitr::kable()
+
+df_analysis %>% 
+  filter(group == "Current") %>% 
+  mutate(treatment = fct_lump(treatment, n = 10)) %>% 
+  count(treatment, sort = TRUE) %>% 
+  knitr::kable()
+```
+
 
 ### Definition of Outcome
 
@@ -299,6 +373,77 @@ glm(group_numeric ~adherence_locf + history_VF + n_conmeds +
   knitr::kable(digits = 2)
 ```
 
+```{r}
+glm(group_numeric ~adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + anyTAMS + log_max_rna, 
+    family = "binomial", data = df_analysis_3)
+
+
+
+coxph(Surv(time_3, event3) ~ group + adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + anyTAMS + log_max_rna,  
+      data = df_analysis_3) %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  filter(term == "groupSwitch") %>% 
+  select(term, adj.HR = estimate) %>% 
+  knitr::kable(digits = 2)
+
+# Calculate bootstrap confidence intervals
+boot_function <- function(data, indices) {
+  d <- data[indices, ]
+  obj <- coxph(Surv(time_3, event3) ~ group + adherence_locf + history_VF + n_conmeds + 
+                                   M184VI + K65R + anyTAMS + log_max_rna, data = d)
+  broom::tidy(obj)$estimate[1]
+} 
+
+set.seed(1)
+# b <- boot(df_analysis_3, boot_function, R = 500, parallel = "multicore", 
+#           ncpus = 12)
+# write_rds(b, here("processed", "06-bootstraps_cox_any_detection.rds"))
+
+b <- pro_read("06-bootstraps_cox_any_detection.rds")
+
+tibble("HR" = b$t0,
+       "LCI" = quantile(b$t, 0.025)[[1]],
+       "UCI" = quantile(b$t, 0.975)[[1]]) %>%
+  mutate_all(~scales::comma(exp(.x), accuracy = 0.01))
+
+
+coxph(Surv(time_3, event3) ~ group,  
+      data = df_analysis_3) %>% 
+  tidy(exp = TRUE, conf.int = TRUE) %>% 
+  filter(term == "groupSwitch") %>% 
+  select(term, adj.HR = estimate) %>% 
+  knitr::kable(digits = 2)
+
+# Calculate bootstrap confidence intervals
+boot_function <- function(data, indices) {
+  d <- data[indices, ]
+  obj <- coxph(Surv(time_3, event3) ~ group, data = d)
+  broom::tidy(obj)$estimate[1]
+} 
+
+set.seed(1)
+# b <- boot(df_analysis_3, boot_function, R = 500, parallel = "multicore", 
+#           ncpus = 12)
+# write_rds(b, here("processed", "06-bootstraps_cox_ua_any_detection.rds"))
+
+b <- pro_read("06-bootstraps_cox_ua_any_detection.rds")
+
+tibble("HR" = b$t0,
+       "LCI" = quantile(b$t, 0.025)[[1]],
+       "UCI" = quantile(b$t, 0.975)[[1]]) %>%
+  mutate_all(~scales::comma(exp(.x), accuracy = 0.01))
+
+```
+
+```{r}
+df_analysis_3 %>% 
+  group_by(group) %>% 
+  summarise(events = sum(event3), 
+            fup = sum(time_3)) %>% 
+  mutate(incidence_rate = events/fup * 1000)
+```
 
 
 ### Confirmed virological failure
@@ -501,6 +646,49 @@ ggsave(here("graphs", "06-kaplan_adj_surv_conf_VF.png"),
        dpi = 300, bg = "white", width = 10, height = 6)
 ```
 
+```{r}
+# Calculate bootstrap confidence intervals
+boot_function <- function(data, indices) {
+  d <- data[indices, ]
+  obj <- coxph(Surv(time, event) ~ group, data = d)
+  broom::tidy(obj)$estimate[1]
+} 
+
+set.seed(1)
+# b <- boot(df_analysis, boot_function, R = 500, parallel = "multicore",
+#           ncpus = 12)
+# write_rds(b, here("processed", "06-bootstraps_cox_ua_VF.rds"))
+
+b <- pro_read("06-bootstraps_cox_ua_VF.rds")
+
+tibble("HR" = b$t0,
+       "LCI" = quantile(b$t, 0.025)[[1]],
+       "UCI" = quantile(b$t, 0.975)[[1]]) %>%
+  mutate_all(~scales::comma(exp(.x), accuracy = 0.01)) %>% 
+  knitr::kable(caption = "Unadjusted Estimates for VF")
+
+# Calculate bootstrap confidence intervals
+boot_function <- function(data, indices) {
+  d <- data[indices, ]
+  obj <- coxph(Surv(time, event) ~ group + adherence_locf + history_VF + 
+                 n_conmeds + M184VI + K65R + anyTAMS + log_max_rna, data = d)
+  broom::tidy(obj)$estimate[1]
+} 
+
+set.seed(1)
+# b <- boot(df_analysis, boot_function, R = 500, parallel = "multicore",
+#           ncpus = 12)
+# write_rds(b, here("processed", "06-bootstraps_cox_VF.rds"))
+
+b <- pro_read("06-bootstraps_cox_VF.rds")
+
+tibble("HR" = b$t0,
+       "LCI" = quantile(b$t, 0.025)[[1]],
+       "UCI" = quantile(b$t, 0.975)[[1]]) %>%
+  mutate_all(~scales::comma(exp(.x), accuracy = 0.01)) %>% 
+  knitr::kable(caption = "Conditional Estimates for VF")
+```
+
 
 ```{r adjusted_event_ipwmodel}
 
@@ -513,5 +701,12 @@ glm(group_numeric ~ adherence_locf + history_VF + n_conmeds +
   knitr::kable(digits = 2)
 ```
 
+```{r}
+df_analysis %>% 
+  group_by(group) %>% 
+  summarise(events = sum(event), 
+            fup = sum(time)) %>% 
+  mutate(incidence_rate = events/fup * 1000)
+```
 
 
