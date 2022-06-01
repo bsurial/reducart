@@ -10,7 +10,7 @@ if (!dir.exists("processed")) {
   message("Processed-folder already exists.")
 }
 
-dir <- here("data", "2103stata/")
+dir <- here("data", "2205stata/")
 # Get all files in SHCS folder
 files <- list.files(path = dir)
 files_full <- str_c(dir, files)
