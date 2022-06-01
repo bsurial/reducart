@@ -10,6 +10,7 @@ library(nephro)
 library(gtsummary)
 library(gt)
 library(here)
+library(dtplyr)
 set.seed(12)
 
 
@@ -151,6 +152,7 @@ rna_sub <- rna
 
 time_supp_df <- rna_sub %>% 
   as_tibble() %>% 
+  lazy_dt() %>% 
   # I allow blips below 200
   mutate(blip = if_else(rna >= 50 & rna < 200 & lag(rna) < 50 & lead(rna) < 50, 
                         TRUE, FALSE)) %>% 
@@ -166,7 +168,8 @@ time_supp_df <- rna_sub %>%
   group_by(id, grp) %>% 
   mutate(time_suppressed = cumsum(time_suppressed)) %>% 
   ungroup() %>% 
-  select(-grp) 
+  select(-grp) %>% 
+  as_tibble()
 
 
 # Add time since viral suppression to dataset
@@ -241,12 +244,13 @@ df_step3 <- rifa_df[df_step2,
                            days_suppressed = i.days_suppressed, 
                            days_suppressed_actual = i.days_suppressed_actual, 
                            rifamp = x.rifamp, rifa_drug = x.rifa_drug)] %>% 
-  as_tibble() %>%
+  lazy_dt() %>% 
   mutate(rifamp = replace_na(rifamp, FALSE)) %>% 
   arrange(id, trial_nr, desc(rifamp)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 
 setDT(df_step3) 
@@ -260,12 +264,13 @@ df_step4 <- carbam_df[df_step3,
           days_suppressed_actual = i.days_suppressed_actual, 
           rifamp = i.rifamp, rifa_drug = i.rifa_drug, 
           carbam = x.carbam, carbam_drug = x.carbam_drug)] %>% 
-  as_tibble() %>%
+  lazy_dt() %>% 
   mutate(carbam = replace_na(carbam, FALSE)) %>% 
   arrange(id, trial_nr, desc(carbam)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 setDT(df_step4)
 df_step5 <- phenytoin_df[df_step4, 
@@ -280,12 +285,13 @@ df_step5 <- phenytoin_df[df_step4,
                         carbam = i.carbam, carbam_drug = i.carbam_drug, 
                         phenytoin = x.phenytoin, 
                         phenytoin_drug = x.phenytoin_drug)] %>% 
-  as_tibble() %>%
+  lazy_dt() %>%
   mutate(phenytoin = replace_na(phenytoin, FALSE)) %>% 
   arrange(id, trial_nr, desc(phenytoin)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 setDT(df_step5)
 df_step6 <- primidone_df[df_step5, 
@@ -303,12 +309,13 @@ df_step6 <- primidone_df[df_step5,
                primidone = x.primidone, 
                primidone_drug = x.primidone_drug
                )] %>% 
-  as_tibble() %>%
+  lazy_dt() %>%
   mutate(primidone = replace_na(primidone, FALSE)) %>% 
   arrange(id, trial_nr, desc(primidone)) %>% # This places any TRUE before FALSE
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 
 df_step6 <- df_step6 %>% 
@@ -336,6 +343,7 @@ adhe_df <- adhe %>%
 # Calculate Time with adherence once every 2 weeks or better
 adhe_df <- adhe_df %>% 
   # filter(id == 12601) %>% 
+  lazy_dt() %>% 
   mutate(good_adh = missed_locf %in% 
            c("once a month", "never", "once every 2 weeks")) %>% 
   group_by(id) %>% 
@@ -348,7 +356,8 @@ adhe_df <- adhe_df %>%
   mutate(grp = cumsum(time_good_adh == 0)) %>% 
   group_by(id, grp) %>% 
   mutate(time_good_adh = cumsum(time_good_adh)) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 # Set consider all adherence data one year prior to and 14 days after the trial
 # start day
@@ -381,7 +390,7 @@ df_step7 <- adhe_df[df_step6,
                       adherence = x.missed,
                       adherence_locf = x.missed_locf
                     )] %>% 
-  as_tibble() %>% 
+  lazy_dt() %>% 
   arrange(id, trial_nr, abs(trial_start - ad_date)) %>% 
   group_by(id, trial_nr) %>% 
   slice(1) %>%
@@ -391,7 +400,8 @@ df_step7 <- adhe_df[df_step6,
                                         time_good_adh + 
                                           as.numeric(trial_start - ad_date)),
          time_good_adh_actual = if_else(time_good_adh_actual < 0, 0, 
-                                        time_good_adh_actual)) 
+                                        time_good_adh_actual)) %>% 
+  as_tibble()
 
 
 
@@ -440,11 +450,12 @@ df_step8 <- crea_df[df_step7,
           egfr = x.egfr, 
           cre_date = x.cre_date, 
           born = x.born)] %>% 
-  as_tibble() %>% 
+  lazy_dt() %>% 
   arrange(id, trial_nr, abs(trial_start - cre_date)) %>% 
   group_by(id, trial_nr) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 
 
@@ -505,11 +516,13 @@ res_cum <- resi_data %>%
 df_step10_res <- df_step10 %>% 
   select(id, trial_start) %>% 
   left_join(res_cum) %>% 
+  lazy_dt() %>% 
   filter(dat < trial_start | is.na(dat)) %>%
   arrange(id, trial_start, desc(dat)) %>% 
   group_by(id, trial_start) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() %>% 
+  as_tibble()
 
 
 tams <- "(M41[A-Z]?[A-Z]?)|(D67[A-Z]?[A-Z]?)|(K70[R])|(L210[A-Z]?[A-Z]?)|(T215[A-Z]?[A-Z]?)|(K219[A-Z]?[A-Z]?)"
@@ -635,6 +648,7 @@ rna_art <- on_treatment[rna,
 
 # Adherence data
 ad_table <- adhe_df %>% 
+  as_tibble() %>% 
   arrange(id, ad_date) %>% 
   select(-(amenddate:inputdate)) %>% 
   group_by(id) %>% 
@@ -666,25 +680,9 @@ rna_detailed_long <- ad_table[rna_art,
 
 
 
-# rna_detailed_long %>% 
-#   group_by(id) %>% 
-#   mutate(flag = if_else(rna > 200 & lag(rna) > 200 & on_art == 1, 
-#                         "X", "")) %>% 
-#   group_by(id, art_period) %>% 
-#   mutate(t = as.numeric(rna_date - first(period_start)), 
-#          failure = if_else(flag == "X" & 
-#                              t >= 180, "Y", "N")) %>% 
-#   filter(id == 10045) %>% 
-#   print(n = 100)
 
-# any_failure <- failure_long %>% 
-#   group_by(id) %>% 
-#   summarise(any_failure = any(failure == "Y")) %>% 
-#   mutate(any_failure = replace_na(any_failure, FALSE))
-# 
-# 
-# # rna_detailed_long[rna_detailed_long$id == 10045, "rna"][50:55,] <- 300
 failure_df <- rna_detailed_long %>% 
+  lazy_dt() %>% 
   group_by(id, art_period) %>% 
   mutate(days_on_art = if_else(on_art == 1, 
                                as.numeric(rna_date - first(period_start)), 
@@ -698,17 +696,20 @@ failure_df <- rna_detailed_long %>%
     rna >= 200 & lag(rna) >= 200 & 
       time_lapsed >= 14 & previously_suppressed == 1 ~ 1, 
     TRUE ~ 0
-  )) 
+  )) %>% 
+  as_tibble()
 
 
 elig_data <- elig_data %>% 
+  lazy_dt() %>% 
   select(id, trial_start) %>% 
   left_join(failure_df, by = "id") %>% 
   group_by(id, trial_start) %>% 
   summarise(history_VF = any(failure == 1 & rna_date < trial_start)) %>% 
   ungroup() %>% 
   right_join(elig_data, by = c("id", "trial_start")) %>% 
-  to_last(history_VF)
+  to_last(history_VF) %>% 
+  as_tibble()
 
 
 
@@ -760,11 +761,12 @@ conmeds <- drug_nohiv[elig_small,
                       .(id, 
                         trial_start = i.trial_start,
                         brand = x.brand)] %>% 
-  as_tibble() %>% 
+  lazy_dt() %>% 
   distinct(id, trial_start, brand) %>% # remove duplicates per trial
   group_by(id, trial_start) %>% 
   summarise(n_conmeds = sum(!is.na(brand))) %>% 
-  arrange(desc(n_conmeds))
+  arrange(desc(n_conmeds)) %>% 
+  as_tibble()
 
 
 elig_data <- elig_data %>% 
@@ -893,9 +895,6 @@ elig_data %>%
 # Write Data --------------------------------------------------------------
 
 write_rds(elig_data, here::here("processed", "04-nested_trial_data.rds"))
-
-
-
 
 
 
